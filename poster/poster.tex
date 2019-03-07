@@ -1,0 +1,282 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% %%	Posterdown PDF class for LaTeX files	 08-JAN-2019
+%% %%	For any information please send an e-mail to:
+%% %%		brentthonre18@gmail.com (Brent Thorne)
+%% %%
+%% %%	Initial class provided by:
+%% %%		Brent Thorne
+%% %% Contributors: Shea Connell (SC)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\documentclass[article,30pt,extrafontsizes]{memoir}
+
+%utf-8 seems to be important
+\RequirePackage[utf8]{inputenc}
+\RequirePackage[T1]{fontenc}
+\RequirePackage{lmodern}
+\RequirePackage{multicol}
+\RequirePackage{graphicx}
+\RequirePackage{lipsum}
+\RequirePackage{blindtext}
+\RequirePackage[svgnames,table]{xcolor}
+\RequirePackage{tikz}
+\RequirePackage[framemethod=tikz]{mdframed}
+\RequirePackage{color}
+\RequirePackage{geometry}
+\RequirePackage{adjmulticol}
+\RequirePackage[skins,most,listings,skins]{tcolorbox}
+
+%For kable extra package :)
+\RequirePackage{booktabs}
+\RequirePackage{longtable}
+\RequirePackage{array}
+\RequirePackage{multirow}
+\RequirePackage{wrapfig}
+\RequirePackage{float}
+\RequirePackage{colortbl}
+\RequirePackage{pdflscape}
+\RequirePackage{pagecolor}
+\RequirePackage{tabu}
+\RequirePackage{threeparttable}
+\RequirePackage{threeparttablex}
+\RequirePackage[normalem]{ulem}
+\RequirePackage{makecell}
+\RequirePackage{wrapfig}
+
+%rof hyperrefs
+\RequirePackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=linkcol,
+    citecolor=citecol,
+    filecolor=linkcol,
+    urlcolor=urlcol,
+}
+%For figure and table placement
+\RequirePackage{float}
+\floatplacement{figure}{H}
+\floatplacement{table}{H}
+
+%%%%%%%%% COLOURS %%%%%%%%
+%Fill/ Line Colours
+\definecolor{titleboxbgcol}{HTML}{45ADA8}
+\definecolor{titleboxbordercol}{HTML}{547980}
+\definecolor{columnlinecol}{HTML}{008080}
+\definecolor{bodybgcol}{HTML}{ffffff}
+\definecolor{sectitlebgcol}{HTML}{547980}
+\definecolor{sectitlebordercol}{HTML}{547980}
+% Text Colours
+\definecolor{titletextcol}{HTML}{FFFFFF}
+\definecolor{authortextcol}{HTML}{FFFFFF}
+\definecolor{affiliationtextcol}{HTML}{FFFFFF}
+\definecolor{sectitletextcol}{HTML}{ffffff}
+\definecolor{bodytextcol}{HTML}{594F4F}
+\definecolor{footnotetextcol}{HTML}{ffffff}
+\definecolor{citecol}{HTML}{CC0000}
+\definecolor{urlcol}{HTML}{008080}
+\definecolor{linkcol}{HTML}{008080}
+
+
+%Memoir spacing options
+%spacing between figure/ table and caption
+\setlength{\abovecaptionskip}{0.4in}
+\setlength{\belowcaptionskip}{0.2in}
+\captionnamefont{\footnotesize\sffamily\bfseries}
+\captiontitlefont{\footnotesize\sffamily}
+
+%define column options
+\setlength{\columnseprule}{0pt}
+\def\columnseprulecolor{\color{columnlinecol}}
+
+%define section title features
+\setsubsubsecheadstyle{\small\color{sectitletextcol}\textbf}% Set \section style
+\setsecnumformat{}
+\def\sectionmark#1{\markboth{#1}{#1}}
+
+%%%%%%%%%%%% TCOLORBOXES TO THE RESCUE %%%%%%%%%%%%%%%%%%%%
+%Title Box
+\newtcolorbox{topbox}{
+enhanced,
+colback=titleboxbgcol,
+colframe=titleboxbordercol,
+halign=center,
+boxrule=1cm,
+sharp corners=all,
+ overlay={
+    \node[anchor=south west]
+      at ([xshift=1in,yshift=1in]frame.south west)
+       {\includegraphics[width=5in]{Figures/SHESC}};
+    \node[anchor=south east]
+      at ([xshift=-1in,yshift=1in]frame.south east)
+       {\includegraphics[width=5in]{Figures/SHESC}};}
+
+}
+%Body Section Title Box
+\newtcolorbox{myboxstuff}[1][]{
+code={\parindent=0em},
+colframe=sectitlebordercol,
+nobeforeafter,
+left skip=0pt,
+valign=center,
+halign=center,
+fontupper=\Large\bfseries,
+colupper=sectitletextcol,
+boxrule=2mm,
+colback=sectitlebgcol,
+sharp corners=uphill, #1}
+\newcommand{\mybox}[1]{%
+\begin{myboxstuff}
+\strut #1
+\end{myboxstuff}%
+}
+\makeheadstyles{MyBox}{
+    \setsecheadstyle{\mybox}
+}
+\headstyles{MyBox}\makepagestyle{MyBox}
+%-----------------------------------------------------
+%Make sure that the page is empty of any preset items from memoir
+\thispagestyle{empty}
+
+%biblatex options
+\RequirePackage[sorting=none,backend=biber]{biblatex}
+\renewcommand*{\bibfont}{\small} %% SC
+\bibliography{MyLibrary}
+\defbibheading{bibliography}[\bibname]{%
+\setlength\bibitemsep{0.8\itemsep} %% SC
+\section*{#1}%
+\markboth{#1}{#1}}
+\AtBeginDocument{%
+  \renewcommand{\bibname}{References}
+}
+
+%Remove section numbering & set 2nd level header as first level
+%to avoid the automatic new page generated from memoir chapter
+%formatting
+\counterwithout{section}{chapter}
+\makechapterstyle{mydefault}{
+\addtocounter{secnumdepth}{2}
+\setsecheadstyle{\mybox}
+\setsubsecheadstyle{\itshape}
+\setsubsubsecheadstyle{\itshape}
+}
+
+%set the chapterstyle
+\chapterstyle{mydefault}
+
+%define column spacing
+\setlength\columnsep{0.5in}
+
+%spacing params
+\setlength\parindent{0em}
+\setlength\parskip{0em}
+\setlength\hangparas{0}
+
+%spacing after section head title
+\setaftersecskip{0em}
+\setbeforesecskip{1.5em}
+\setlength\textfloatsep{0in}
+\setlength\floatsep{0in}
+\setlength\intextsep{0in}
+
+\setstocksize{36in}{48in}
+\settrimmedsize{\stockheight}{\stockwidth}{*}
+\settypeblocksize{36in}{48in}{*}
+\setlrmargins{*}{*}{1}
+\setulmarginsandblock{2.5cm}{*}{*}
+\setmarginnotes{0em}{0cm}{0cm}
+\setlength{\footskip}{0cm}
+\setlength{\footnotesep}{0cm}
+\setlength{\headheight}{0pt}
+\setlength{\headsep}{0pt}
+\setlength{\trimtop}{0pt}
+\setlength{\trimedge}{0pt}
+\setlength{\uppermargin}{0pt}
+\checkandfixthelayout
+
+%Footnote to white
+\RequirePackage{footmisc}
+\def\footnotelayout{\centering\color{footnotetextcol}}
+
+% see https://stackoverflow.com/a/47122900
+
+% choose font family
+\RequirePackage{palatino}
+
+% define the BODYBGCOL
+\newpagecolor{bodybgcol}
+
+%sets footnote to be white hopefully
+\renewcommand\footnoterule{}
+\renewcommand{\thempfootnote}{\footnotesize\color{footnotetextcol}{\arabic{mpfootnote}}}
+
+%-------------- Begin Document -------------------%
+\begin{document}
+
+%-------------- Title Box Start ------------------%
+%tcolorbox allows for pictures hopefully
+\begin{topbox}
+  \color{titletextcol}
+  \vspace{0.5in}
+  \Huge{\fontfamily{phv}\selectfont Generalized additive mixed models for
+archaeological network data}  \\[0.3in]  %% SC
+  \color{authortextcol} \Large{Nicolas Gauthier} \\[0.2in] %% SC
+  \color{affiliationtextcol} \large{School of Human Evolution and Social Change, Arizona State University} %% SC
+  \vspace{1cm}
+\end{topbox}
+%--------------- Title Box End -------------------%
+%----------------- Body Start --------------------%
+% Begin body of poster
+\begin{adjmulticols*}{4}{0.5in}{0.5in}
+\normalsize{  %% SC
+\color{bodytextcol}
+\section{Introduction}\label{introduction}
+
+Distance is a fundamental constraint on human social interaction. This
+basic principle motivates the use of spatial interaction models for
+estimating flows of people, information, and resources on spatial and
+social networks. These models have both valid dynamical and statistical
+interpretations, a key strength well supported by theory and data from
+geography, economics, ecology, and genetics. To date, archaeologists
+have primarily relied on the dynamical approach because the
+idiosyncrasies of archaeological data make the wholesale adoption of
+statistical approaches from other fields impractical. \vspace{1cm} Here,
+I argue for the use of generalized additive mixed models (GAMMs) for
+statistical inference on interaction networks in archaeology. GAMMs are
+a flexible form of regression model well-matched to the complexities of
+the archaeological record, including non-normal distributions in the
+form of counts or proportions, non-independent observations with
+correlated errors, and non-linear functional relationships. Using two
+case studies -- an ethnographic marriage network and an archaeological
+assemblage similarity network -- I illustrate how this approach can lead
+to unbiased parameter estimates and more robust comparisons of competing
+hypotheses. I conclude by outlining how future empirical efforts can
+help to refine our thinking about past network dynamics and reveal
+cross-cultural regularities of human social interaction in the present
+day.
+
+\section{Study Site}\label{study-site}
+
+\section{Objectives}\label{objectives}
+
+\lipsum[2]
+\lipsum[4]
+
+\section{Methods}\label{methods}
+
+\section{Results}\label{results}
+
+\vspace{1cm}
+
+\vspace{2cm}
+
+\lipsum[1-2]
+
+\section{Next Steps}\label{next-steps}
+
+\small\printbibliography
+}
+\end{adjmulticols*}
+%------------------ Body End ---------------------%
+%end the poster
+\end{document}
+
