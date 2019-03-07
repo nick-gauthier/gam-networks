@@ -12,7 +12,12 @@ knitr::opts_chunk$set(echo = TRUE)
 # Setup
 
 ```{r }
+library(raster)
 library(tidyverse)
+library(readxl)
+library(mgcv)
+# devtools::install_github('nspope/corMLPE')
+library(corMLPE)
 library(tidygraph)
 library(ggraph)
 ```
@@ -28,9 +33,173 @@ chumash <- read.csv('chumash_marriage.csv', row.names = 1) %>%
 ```
 
 ```{r}
+raster('chumash_map_georeferenced.tif') %>% plot
+```
+
+```{r}
 ggraph(chumash) +
   geom_edge_link(aes(width = weight), alpha = .1) +
   geom_node_point(aes(size = centrality)) +
   theme_void()
+```
+
+```{r}
+stamps <- read_delim('stamps.csv', delim = ';')
+
+stamps %>%
+  group_by(site) %>%
+  count %>%
+  pull(n) %>% range
+  ggplot(aes(n)) +
+  geom_histogram()
+
+
+ggplot(stamps, aes (lat, long)) +
+  geom_density2d()
+
+```
+
+
+## iriquois
+```{r}
+lcp_groups <- read_xlsx('pone.0209689.s001.xlsx', sheet = 1) %>%
+  rename(from = 1) %>%
+  gather(to, lcp, 2:14)
+
+euc_groups <- read_xlsx('pone.0209689.s001.xlsx', sheet = 3) %>%
+  rename(from = 1) %>%
+  gather(to, euc, 2:14) %>%
+  mutate_if(is.character, ~str_replace_all(., ', ', '-')) %>%
+  mutate_if(is.character, ~str_replace(., 'Trent River', 'Trent Valley')) %>%
+  mutate_if(is_character, ~str_replace(., 'Lake Erie Plain-Niagara Frontier', 'Lake Erie Plain'))
+
+br_groups <- read_xlsx('pone.0209689.s001.xlsx', sheet = 2) %>%
+  rename(from = Cluster) %>%
+  gather(to, similarity, 2:14) %>%
+  mutate_if(is.character, ~str_replace_all(., ', ', '-')) %>%
+  mutate_if(is.character, ~str_replace(., 'Trent River', 'Trent Valley')) %>%
+  mutate_if(is_character, ~str_replace(., 'Lake Erie Plain-Niagara Frontier', 'Lake Erie Plain'))
+
+dat <- full_join(lcp_groups, br_groups) %>%
+  full_join(euc_groups) %>%
+  filter(from < to )
+
+m1 <- gam(similarity ~ s(lcp), data = dat, method = 'ML')
+m2 <- gam(similarity ~ s(lcp), family = betar(), data = dat, method = 'ML')
+m3 <- gamm(qlogis(similarity) ~ s(lcp), data = dat, correlation = corMLPE(form = ~from + to), method = 'ML')
+plot(m3$gam, trans = plogis)
+
+summary(m3$gam)
+ggraph(net) +
+  geom_edge_link()+
+  geom_node_point()
+
+'A' > 'B'
+```
+Check this: model without correlation structure shows a nonlinear effect, mainly because of a cluster of links at high distances that have moderate similarity.
+```{r}
+plot(m2, trans = plogis)
+```
+But all of these links come from the same site, so they are not independent. Adding the correlation structure fixes this
+```{r}
+plot(m3$gam, trans = plogis)
+```
+
+```{r}
+m3$lme
+# rho of 0.35!
+```
+
+```{r}
+sites_groups <- read_xlsx('pone.0209689.s001.xlsx', sheet = 4, range = 'A2:B98')
+
+br_sites_1400_1500 <- read_xlsx('pone.0209689.s001.xlsx', sheet = 4, range = 'C2:CU98') %>%
+  rename(from = Site) %>%
+  gather(to, similarity, 2:97) %>%
+  mutate(similarity = similarity / 200)
+dist_sites_1400_1450 <- read_xlsx('pone.0209689.s001.xlsx', sheet = 7, range = 'B2:CT98') %>%
+  rename(from = Site) %>%
+  gather(to, distance, 2:97) %>%
+  mutate_if(is.character, ~str_replace(., 'Otstungo', 'Otsungo'))
+
+
+br_sites_1450_1550 <- read_xlsx('pone.0209689.s001.xlsx', sheet = 5, range = 'B2:CA79') %>%
+  rename(from = Site) %>%
+  gather(to, similarity, 2:78) %>%
+  mutate(similarity = similarity / 200)
+dist_sites_1450_1550 <- read_xlsx('pone.0209689.s001.xlsx', sheet = 8, range = 'B2:CA79') %>%
+  rename(from = Site) %>%
+  gather(to, distance, 2:78) %>%
+  mutate_if(is.character, ~str_replace(., 'Otstungo', 'Otsungo')) %>%
+  mutate_if(is.character, ~str_replace(., '27/VII', '27VII'))
+
+br_sites_1500_1600 <- read_xlsx('pone.0209689.s001.xlsx', sheet = 6, range = 'B2:BN66') %>%
+  rename(from = Site) %>%
+  gather(to, similarity, 2:65) %>%
+  mutate(similarity = similarity / 200) %>%
+  mutate_if(is.character, ~str_replace(., 'Wagners', "Wagner's"))
+dist_sites_1500_1600 <- read_xlsx('pone.0209689.s001.xlsx', sheet = 9, range = 'B2:BN66') %>%
+  rename(from = Site) %>%
+  gather(to, distance, 2:65) %>%
+  mutate_if(is.character, ~str_replace(., '27/VII', '27VII'))
+
+```
+
+```{r}
+dat <- bind_rows(left_join(br_sites_1400_1500, dist_sites_1400_1450),
+                 left_join(br_sites_1450_1550, dist_sites_1450_1550),
+                 left_join(br_sites_1500_1600, dist_sites_1500_1600),
+                 .id = 'time') %>%
+  filter(from < to & similarity > 0)
+
+  # inner_join(sites_groups, by = c('from'='Site')) %>%
+  # inner_join(sites_groups, by = c('to'='Site')) %>%
+  # mutate(same_region = Group.x == Group.y) %>%
+  # select(-c(Group.x, Group.y))
+
+
+qplot(distance, similarity, color = time, data = dat, geom = 'point') + geom_smooth()
+```
+
+```{r}
+m1 <- gam(similarity ~ s(distance) + time, data = dat, method = 'ML')
+m2 <- gam(similarity ~ s(distance) + time, family = betar(), data = dat, method = 'ML')
+m3 <- gamm(qlogis(similarity) ~ s(distance, bs = 'cr') + as.factor(time), data = dat, correlation = corMLPE(form = ~from + to|as.factor(time)), method = 'REML')
+
+m4 <- gamm(qlogis(similarity) ~ s(distance, bs = 'cr') + as.factor(time) + same_region, data = dat, correlation = corMLPE(form = ~from + to|time), method = 'REML')
+
+plot(m1)
+plot(m2, trans = plogis)
+
+plot(m3$gam, trans = plogis)
+plot(m4$gam, trans = plogis)
+
+AIC(m3$lme, m4$lme)
+# moderate support for regional effect
+summary(m3$gam)
+summary(m4$gam)
+summary(m4$lme)
+
+
+ggplot(dat, aes(distance)) + geom_histogram()
+ggplot(dat, aes((similarity))) + geom_histogram()
+ggplot(dat, aes(qlogis(similarity), fill = time)) + geom_histogram()
+sum(min(dat$similarity))
+
+gam.check(m3$gam)
+```
+
+```{r}
+mod_time <- dat %>%
+  group_by(time) %>%
+  nest %>%
+  mutate(model = map(data, ~gamm(qlogis(similarity) ~ s(distance, bs = 'cr'), 
+                                 data = ., correlation = corMLPE(form = ~from + to), method = 'ML')),
+         r2 = map_dbl(model, ~summary(.$gam)$r.sq))
+mod_time
+
+mod_time$model %>%
+  map(~.$gam) %>%
+  walk(plot, trans = plogis)
 ```
 
