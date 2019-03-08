@@ -203,3 +203,51 @@ mod_time$model %>%
   walk(plot, trans = plogis)
 ```
 
+
+## Oxford Pots
+```{r}
+library(archdata)
+data("OxfordPots")
+
+ggplot(OxfordPots, aes(OxfordPct, OxfordDst)) +
+  geom_point() + geom_smooth()
+ggplot(OxfordPots, aes(OxfordPct)) +
+  geom_histogram()
+
+m1 <- gam(OxfordPct ~ s(OxfordDst), data = OxfordPots)
+plot(m1)
+gam.check(m1)
+
+m1 <- gam(OxfordPct ~ s(OxfordDst) + s(WalledArea), data = OxfordPots)
+plot(m1)
+gam.check(m1)
+
+m2 <- gam(NewForestPct ~ s(NewForestDst), data = OxfordPots)
+plot(m2)
+gam.check(m2) 
+
+
+dat <- OxfordPots %>%
+  gather(key, value, OxfordPct:NewForestDst) %>%
+  separate(key, c('origin', 'measure'), sep = -3) %>%
+  spread(measure, value) %>%
+  rename(percent = Pct, distance = Dst)
+
+
+ggplot(dat, aes(distance, percent, color = origin)) +
+  geom_point()
+
+
+m1 <- gam(percent ~ s(distance) + Place + origin + as.factor(WaterTrans), data = dat)
+m1
+plot(m1)
+summary(m1)
+dat %>%
+  filter(origin == 'Oxford') %>%
+  select(Place, WalledArea) %>%
+  mutate(distance = 0, WaterTrans = 0, origin = 'Oxford') %>%
+  mutate(preds = predict(m1, .)) %>%
+  ggplot(aes(preds, WalledArea)) +
+  geom_point()
+```
+
