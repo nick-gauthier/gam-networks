@@ -13,9 +13,12 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r }
 library(raster)
+library(archdata)
 library(tidyverse)
 library(readxl)
 library(mgcv)
+library(ggmap)
+library(gratia)
 # devtools::install_github('nspope/corMLPE')
 library(corMLPE)
 library(tidygraph)
@@ -206,26 +209,7 @@ mod_time$model %>%
 
 ## Oxford Pots
 ```{r}
-library(archdata)
 data("OxfordPots")
-
-ggplot(OxfordPots, aes(OxfordPct, OxfordDst)) +
-  geom_point() + geom_smooth()
-ggplot(OxfordPots, aes(OxfordPct)) +
-  geom_histogram()
-
-m1 <- gam(OxfordPct ~ s(OxfordDst), data = OxfordPots)
-plot(m1)
-gam.check(m1)
-
-m1 <- gam(OxfordPct ~ s(OxfordDst) + s(WalledArea), data = OxfordPots)
-plot(m1)
-gam.check(m1)
-
-m2 <- gam(NewForestPct ~ s(NewForestDst), data = OxfordPots)
-plot(m2)
-gam.check(m2) 
-
 
 dat <- OxfordPots %>%
   gather(key, value, OxfordPct:NewForestDst) %>%
@@ -249,5 +233,111 @@ dat %>%
   mutate(preds = predict(m1, .)) %>%
   ggplot(aes(preds, WalledArea)) +
   geom_point()
+```
+
+```{r}
+ggmap::register_google(key = "AIzaSyBv3z6j76K40GoAJGfJYDALwI1hU-ucGsA")
+places <- dat %>%
+  pull(Place) %>%
+  unique 
+  
+pts <- ggmap::geocode(paste0(places, ', UK')) %>% 
+  mutate(place = places)
+
+
+ggplot(pts, aes(lon, lat)) +
+  geom_point() +
+  coord_quickmap() +
+  geom_label(aes(label = place))
+```
+
+```{r}
+library(sf)
+origins <- tibble(from = c('Oxford, UK', 'New Forest, UK')) %>%
+  mutate_geocode(from) %>%
+  st_as_sf(coords = c('lon', 'lat')) %>%
+  st_set_crs(4326)
+  
+  
+pts %>% 
+ st_as_sf(coords = c('lon', 'lat')) %>%
+  st_set_crs(4326) %>%
+  st_distance(origins) %>%
+  `colnames<-`(c('Oxford', 'NewForest')) %>%
+  as_tibble %>%
+  mutate(to = pts$place) %>%
+  gather(from, distance, Oxford:NewForest) %>%
+  left_join(dat, by = c('from' = 'origin', 'to' = 'Place')) %>%
+  mutate(distance.x = as.numeric(distance.x) / 1000) %>%
+  ggplot(aes(distance.y, distance.x, color = from)) +
+  geom_point() +
+  geom_label(aes(label = to), alpha = .4)
+
+dat
+```
+From this we can see that Wroxeter, Mildenhall, Clausentum and Brough on Humber are susupects
+```{r}
+pts <- places %>%
+  str_replace('Clausentum', 'Bitterne') %>%
+  str_replace('Mildenhall', 'Mildenhall, Wiltshire') %>%
+  paste0(', UK') %>%
+  geocode %>% 
+  mutate(place = places) %>% 
+ st_as_sf(coords = c('lon', 'lat')) %>%
+  st_set_crs(4326)
+
+origins <- tibble(from = c('Oxford, UK', 'New Forest, UK')) %>%
+  mutate_geocode(from) %>%
+  st_as_sf(coords = c('lon', 'lat')) %>%
+  st_set_crs(4326)
+  
+  
+dat2<- st_distance(pts, origins) %>%
+  `colnames<-`(c('Oxford', 'NewForest')) %>%
+  as_tibble %>%
+  mutate(to = pts$place) %>%
+  gather(from, distance, Oxford:NewForest) %>%
+  left_join(dat, by = c('from' = 'origin', 'to' = 'Place')) %>%
+  mutate(distance.x = as.numeric(distance.x) / 1000)
+```
+
+That looks much better.
+```{r}
+ggplot(dat2, aes(distance.y, distance.x, color = from)) +
+  geom_point() +
+  geom_label(aes(label = to), alpha = .4)
+```
+
+```{r}
+dat2 <- left_join(pts, dat, by = c('place' = 'Place')) %>%
+  bind_cols(., as_tibble(st_coordinates(.)))
+
+
+dat2 %>%
+  ggplot() +
+  geom_sf() +
+  geom_sf_label(aes(label = place))
+```
+
+```{r}
+m1 <- gam(percent/100 ~ s(distance) + te(X, Y) + origin, method = 'REML', family = betar, data = dat2)
+
+plot(m1, scheme = 2)
+summary(m1)
+
+draw(m1)
+
+m2 <- gam(percent/100 ~ s(distance, k = 5) + te(X, Y, k = 5), method = 'REML', family = betar, data = filter(dat2, origin == 'Oxford'))
+plot(m2)
+
+expand.grid(X = seq(-3, 2, .03), Y = seq(50.5, 54, .03), origin = 'Oxford', distance = 0) %>%
+  mutate(pred = predict(m2, ., type = 'response')) %>%
+  ggplot() +
+  geom_raster(aes(X, Y, fill = pred)) +
+  scale_fill_viridis_c() +
+  geom_sf(data = origins) #+
+  geom_sf_label(data = origins, aes(label = from))
+  
+  gam.check(m1)
 ```
 
