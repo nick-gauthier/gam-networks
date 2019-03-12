@@ -72,7 +72,7 @@ pots_sites <- readRDS('oxfordpots_locations.RDS') %>%
               summarise(area = mean(WalledArea)), by = c('site' = 'to'))
 ```
 
-```{r, echop = FALSE}
+```{r, echo = FALSE}
 st_distance(pots_sites) %>%
   `colnames<-`(pots_sites$site) %>%
   as_tibble %>%
@@ -170,9 +170,9 @@ ggraph() +
   geom_sf(data = uk_boundary, fill = NA) +
   geom_edge_link(aes(colour = res), edge_width = 2, lineend = 'round') +
   geom_sf(data = filter(pots_sites, site %in% c('Oxford', 'New Forest')), size = 4) +
-  scale_edge_color_distiller(palette = 'RdBu', limits = c(-8, 8), guide = 'legend', name = 'Difference from \nexpectation (%)') +
-  labs(title = 'Ceramic distribution in Roman Britain', subtitle = 'Residuals from distance-only interaction model') +
-  coord_sf(datum = NA, xlim = c(-6, 2), ylim = c(50, 53.7)) +
+  scale_edge_color_distiller(palette = 'RdBu', limits = c(-8, 8), labels = paste0(seq(-8, 8, by = 4), '%'), guide = 'legend', name = '') +
+  labs(title = 'Residuals from a distance-only interaction model', subtitle = 'Red ties are stronger then expected by distance, blue ties weaker') +
+  coord_sf(datum = NA, xlim = c(-6, 2), ylim = c(50, 53.8)) +
   theme_void()
 ```
 
@@ -233,22 +233,26 @@ br_groups <- read_xlsx('pone.0209689.s001.xlsx', sheet = 2) %>%
   mutate_if(is.character, ~str_replace_all(., ', ', '-')) %>%
   mutate_if(is.character, ~str_replace(., 'Trent River', 'Trent Valley')) %>%
   mutate_if(is_character, ~str_replace(., 'Lake Erie Plain-Niagara Frontier', 'Lake Erie Plain'))
+```
 
-dat <- full_join(lcp_groups, br_groups) %>%
+```{r}
+iriquois_dat <- full_join(lcp_groups, br_groups) %>%
   full_join(euc_groups) %>%
   filter(from < to )
 
-m1 <- gam(similarity ~ s(lcp), data = dat, method = 'ML')
-m2 <- gam(similarity ~ s(lcp), family = betar(), data = dat, method = 'ML')
-m3 <- gamm(qlogis(similarity) ~ s(lcp), data = dat, correlation = corMLPE(form = ~from + to), method = 'ML')
+iriquois_dat
+```
+
+```{r}
+m1 <- gam(similarity ~ s(lcp), data = iriquois_dat, method = 'ML')
+m2 <- gam(similarity ~ s(lcp), family = betar(), data = iriquois_dat, method = 'ML')
+m3 <- gamm(qlogis(similarity) ~ s(lcp), data = iriquois_dat, correlation = corMLPE(form = ~from + to), method = 'ML')
 plot(m3$gam, trans = plogis)
 
 summary(m3$gam)
 ggraph(net) +
   geom_edge_link()+
   geom_node_point()
-
-'A' > 'B'
 ```
 Check this: model without correlation structure shows a nonlinear effect, mainly because of a cluster of links at high distances that have moderate similarity.
 ```{r}
@@ -316,23 +320,31 @@ qplot(distance, similarity, color = time, data = dat, geom = 'point') + geom_smo
 ```
 
 ```{r}
-m1 <- gam(similarity ~ s(distance) + time, data = dat, method = 'ML')
-m2 <- gam(similarity ~ s(distance) + time, family = betar(), data = dat, method = 'ML')
-m3 <- gamm(qlogis(similarity) ~ s(distance, bs = 'cr') + as.factor(time), data = dat, correlation = corMLPE(form = ~from + to|as.factor(time)), method = 'REML')
+m1 <- gamm(qlogis(similarity) ~ s(distance, bs = 'cr') + as.factor(time), 
+           data = dat, 
+           correlation = corMLPE(form = ~from + to|as.factor(time)), 
+           method = 'ML')
+m2 <- gamm(qlogis(similarity) ~ s(distance, bs = 'cr', by = as.factor(time)) + as.factor(time), 
+           data = dat, 
+           correlation = corMLPE(form = ~from + to|as.factor(time)), 
+           method = 'ML')
+m3 <- gamm(qlogis(similarity) ~ s(distance, bs = 'cr', m = 2) + s(distance, bs = 'cs', by = as.factor(time), m = 1) +
+             as.factor(time), 
+           data = dat, 
+           correlation = corMLPE(form = ~from + to|as.factor(time)), 
+           method = 'ML')
+AIC(m1$lme, m2$lme, m3$lme)
 
-m4 <- gamm(qlogis(similarity) ~ s(distance, bs = 'cr') + as.factor(time) + same_region, data = dat, correlation = corMLPE(form = ~from + to|time), method = 'REML')
-
-plot(m1)
-plot(m2, trans = plogis)
-
+plot(m1$gam, trans = plogis)
+plot(m2$gam, trans = plogis)
 plot(m3$gam, trans = plogis)
-plot(m4$gam, trans = plogis)
+
 
 AIC(m3$lme, m4$lme)
 # moderate support for regional effect
-summary(m3$gam)
-summary(m4$gam)
-summary(m4$lme)
+summary(m1$gam)
+summary(m2$gam)
+summary(m3$lme)
 
 
 ggplot(dat, aes(distance)) + geom_histogram()

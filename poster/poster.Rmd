@@ -11,13 +11,13 @@ title: '\fontfamily{phv}\selectfont Generalized additive mixed models for archae
 author: "Nicolas Gauthier"
 affiliation: "School of Human Evolution and Social Change, Arizona State University"
 #STYLE & FORMATTING
-titlebox_bgcol: "45ADA8"  #Colour of the Title Box background
-titlebox_bordercol: "547980" #Colour of the title Box border.
+titlebox_bgcol: "2c7fb8"  #Colour of the Title Box background
+titlebox_bordercol: "7fcdbb" #Colour of the title Box border.
 titlebox_shape: "all"
 titlebox_borderwidth: "1cm"
-title_textcol: "FFFFFF" #colour of title text
-author_textcol: "FFFFFF" # Colour of author text
-affiliation_textcol: "FFFFFF" # Colour of affiliation text
+title_textcol: "edf8b1" #colour of title text
+author_textcol: "edf8b1" # Colour of author text
+affiliation_textcol: "edf8b1" # Colour of affiliation text
 title_textsize: "Huge"         # Poster title fontsize
 author_textsize: "Large"       # Author list font size
 affiliation_textsize: "large"  # Affiliation font size
@@ -35,14 +35,14 @@ logoright_yshift: '1in'
 body_bgcol: "ffffff" #colour of the poster main background
 body_textsize: "normalsize"    # Size of the main poster body text
 body_textcol: "594F4F"#000000" # Colour of main text in the body of poster
-column_numbers: 4 # Number of columns that the poster has
+column_numbers: 3 # Number of columns that the poster has
 column_margins: "0.5in" # Margin spacing for columns
 columnline_col: "008080" #colour 
 columnline_width: "0pt" #width of line between each column
 #SECTION TITLE STYLING
 sectitle_textcol: "ffffff" # Colour of the poster section titles
-sectitle_bgcol: "547980" # Colour of the section title box
-sectitle_bordercol: "547980" # Colour of the border around the section title box.
+sectitle_bgcol: "2c7fb8" # Colour of the section title box
+sectitle_bordercol: "7fcdbb" # Colour of the border around the section title box.
 sectitle_borderwidth: "2mm" # Thicknes of the section title box border
 sectitle_boxshape: "uphill" # Changes the shape of the section title box.
 
@@ -63,63 +63,163 @@ output: posterdown::posterdown_latex
 knitr::opts_chunk$set(echo = FALSE, results = 'asis',fig.height = 3.5, fig.width = 4.5, out.width = "100%", warning = FALSE, fig.align = 'center', message = FALSE, dev='cairo_pdf')
 ```
 
+```{r }
+#library(raster)
+library(archdata)
+library(maps)
+library(tidyverse)
+library(readxl)
+library(mgcv)
+library(ggmap)
+library(sf)
+# devtools::install_github('nspope/corMLPE')
+library(corMLPE)
+library(tidygraph)
+library(ggraph)
+data("OxfordPots")
+```
+
 
 # Introduction
 
+# Generalized Additive Mixed Models
+
+GAMMs are a flexible form of regression model well-matched to the complexities of the archaeological record, including non-normal distributions in the form of counts or proportions, non-independent observations with correlated errors, and non-linear functional relationships. Using two case studies -- an ethnographic marriage network and an archaeological assemblage similarity network -- I illustrate how this approach can lead to unbiased parameter estimates and more robust comparisons of competing hypotheses. I conclude by outlining how future empirical efforts can help to refine our thinking about past network dynamics and reveal cross-cultural regularities of human social interaction in the present day.
+
+# Case Studies
+
 Distance is a fundamental constraint on human social interaction. This basic principle motivates the use of spatial interaction models for estimating flows of people, information, and resources on spatial and social networks. These models have both valid dynamical and statistical interpretations, a key strength well supported by theory and data from geography, economics, ecology, and genetics. To date, archaeologists have primarily relied on the dynamical approach because the idiosyncrasies of archaeological data make the wholesale adoption of statistical approaches from other fields impractical.
-\vspace{1cm}
-Here, I argue for the use of generalized additive mixed models (GAMMs) for statistical inference on interaction networks in archaeology. GAMMs are a flexible form of regression model well-matched to the complexities of the archaeological record, including non-normal distributions in the form of counts or proportions, non-independent observations with correlated errors, and non-linear functional relationships. Using two case studies -- an ethnographic marriage network and an archaeological assemblage similarity network -- I illustrate how this approach can lead to unbiased parameter estimates and more robust comparisons of competing hypotheses. I conclude by outlining how future empirical efforts can help to refine our thinking about past network dynamics and reveal cross-cultural regularities of human social interaction in the present day.
 
-# Study Site
+## Oxford Pots
 
-
-
-```{r, out.width="80%", fig.cap='This is a map of Canada, the ggspatial package is great for GIS folks in R! \\label{mymapfig}', cache=TRUE}
-
+A dataset of Late Romano-British pottery. 
+```{r}
+pots <- OxfordPots %>%
+  rename(to = Place) %>%
+  gather(key, value, OxfordPct:NewForestDst) %>%
+  separate(key, c('from', 'measure'), sep = -3) %>%
+  spread(measure, value) %>%
+  rename(percent = Pct, distance = Dst) %>%
+  mutate(from = str_replace(from, 'NewForest', 'New Forest'))
 ```
 
-# Objectives
+```{r, eval = FALSE}
+ggmap::register_google(key = "<your-api-key-here>")
 
-\lipsum[2]
-\lipsum[4]
+pots_sites <- pots %>%
+  select(from, to) %>% 
+  gather %>%
+  pull(value) %>%
+  unique %>% 
+  tibble(site = .) %>%
+  mutate(search_term = str_replace_all(site, c('Clausentum' = 'Bitterne', 'Mildenhall' = 'Mildenhall, Wiltshire')),
+         search_term = paste0(search_term, ', UK')) %>%
+  mutate_geocode(search_term) %>%
+  select(-search_term) %>%
+  st_as_sf(coords = c('lon', 'lat'), crs = 4326) %>%
+  bind_cols(., as_tibble(st_coordinates(.))) %>%
+  rename(x = X, y = Y)
 
-# Methods
-
-
-
-# Results
-
-
-
-\vspace{1cm}
+saveRDS(pots_sites, '../oxfordpots_locations.RDS')
+```
 
 ```{r}
+pots_sites <- readRDS('../oxfordpots_locations.RDS') %>%
+  left_join(select(pots, to, WalledArea) %>% group_by(to) %>% 
+              summarise(area = mean(WalledArea)), by = c('site' = 'to'))
 
+pots_net <- tbl_graph(nodes = pots_sites, edges = pots) %E>%
+  filter(!is.na(percent)) %>%
+  mutate(similarity = percent / 100)
 
+uk_boundary <- maps::map('world', region = 'UK',
+                    fill = TRUE, plot = FALSE) %>%
+  st_as_sf
+
+pots_dat <- pots_net %E>%
+  mutate(water = as.factor(WaterTrans == 1),
+         x = .N()$x[to],
+         y = .N()$y[to]) %>% 
+  as_tibble %>%
+  mutate(from = as.factor(from),
+         to = as.factor(to))
 ```
 
-\vspace{2cm}
+```{r}
+pots_net %E>%
+  arrange(percent) %>%
+ggraph() +
+  geom_sf(data = uk_boundary, fill = NA) +
+  geom_edge_link(aes(colour = percent), edge_width = 2, lineend = 'round') +
+  geom_sf(data = filter(pots_sites, site %in% c('Oxford', 'New Forest')), size = 4) +
+  scale_edge_color_distiller(palette = 'YlGnBu', guide = 'legend', name = 'Percentage of pottery \nfrom origin site') +
+  labs(title = 'Ceramic distribution in Roman Britain', subtitle = 'Percentages of late Romano-British pottery produced in Oxford and New Forest') +
+  coord_sf(datum = NA, xlim = c(-6, 2), ylim = c(50, 53.8)) +
+  theme_void()
+```
 
-```{r, out.width='100%', fig.height=4.5, fig.cap='Using ggplot and patchwork to generate a layout of multiple plots in one figure. The iris dataset was used to generate (a) a line graph, (b) a scatterplot, and (c) a boxplot all together!'}
-
-
+```{r, echo = TRUE}
+m1 <- gam(similarity ~ s(distance, by = water) + water + from,
+          method = 'REML', # algorithm to estimate the GAM
+          select = TRUE, # allow some variables to be selected out
+          family = betar(), # beta distribution between 0 and 1
+          data = pots_dat)
 ```
 
 
-```{r, out.width='85%', fig.width=4.5, fig.height=4, fig.cap='Another typical plot using ggplot, this time with a different theme and r code chunk options for fig.width and fig.height.'}
-
+```{r}
+pots_models <- c("s(distance) + from",
+            "s(distance) + water + from",
+            "s(distance, by = water) + water + from") %>%
+  paste('similarity ~', .) %>%
+  tibble(formula_chr = .) %>%
+  mutate(formula = map(formula_chr, as.formula), 
+         model = map(formula, ~gam(.x, method = 'ML', family = betar(), data = pots_dat)),
+         aic = map_dbl(model, AIC)) %>%
+  arrange(aic)
+pots_models %>%
+  select(formula_chr, aic)
 ```
 
-
-```{r, out.width='80%', fig.width=4.5, fig.align='center', echo=TRUE, fig.height=5, fig.cap='Another figure showing how base R plots might look on this poster!'}
-
-
-
+```{r echo = FALSE, fig.width=6, fig.height=4}
+tmp1 <- expand.grid(distance = 0:140, water = c(TRUE, FALSE), from = 2)
+predict(m1, tmp1, type = 'response', se.fit = TRUE) %>%
+  bind_cols(tmp1) %>%
+  mutate(fit = fit * 100,
+         lower = fit - 2 * se.fit * 100,
+         upper = fit + 2 * se.fit * 100) %>%
+  ggplot(aes(distance, fit, group = water)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper, fill = water), alpha = .2) +
+  geom_line(aes(y = fit, color = water), size = 1.2) +
+  theme_classic() +
+  labs(title = 'Estimated distance decay functions', subtitle = 'With and without water transport',
+       x = 'Distance (km)', y = 'Percentage of pottery from origin site')
 ```
 
-\lipsum[1-2]
+```{r}
+pots_net %E>%
+  mutate(res = residuals(m1, type = 'response') * 100) %>%
+  arrange(abs(res)) %>%
+ggraph() +
+  geom_sf(data = uk_boundary, fill = NA) +
+  geom_edge_link(aes(colour = res), edge_width = 2, lineend = 'round') +
+  geom_sf(data = filter(pots_sites, site %in% c('Oxford', 'New Forest')), size = 4) +
+  scale_edge_color_distiller(palette = 'RdBu', limits = c(-8, 8), labels = paste0(seq(-8, 8, by = 4), '%'), guide = 'legend', name = '') +
+  labs(title = 'Residuals from a distance-only interaction model', subtitle = 'Red ties are stronger then expected, blue ties weaker') +
+  coord_sf(datum = NA, xlim = c(-6, 2), ylim = c(50, 53.8)) +
+  theme_void()
+```
+
+## Chumash Marriages
+
+
 
 # Next Steps
+
+Don't like GAMs? Check out:
+1. GERGMS
+2. AME models
+3. BRMS bayesian implementation?
 
 
 <!--- Here you can set the size of the citation text as well as remove the "References" section if you choose not to have one for some reason :) -->
