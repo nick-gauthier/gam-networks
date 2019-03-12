@@ -12,18 +12,234 @@ knitr::opts_chunk$set(echo = TRUE)
 # Setup
 
 ```{r }
-library(raster)
+#library(raster)
 library(archdata)
+library(maps)
 library(tidyverse)
 library(readxl)
 library(mgcv)
 library(ggmap)
-library(gratia)
+library(sf)
 # devtools::install_github('nspope/corMLPE')
 library(corMLPE)
 library(tidygraph)
 library(ggraph)
 ```
+
+## Oxford Pots
+```{r}
+data("OxfordPots")
+
+pots <- OxfordPots %>%
+  rename(to = Place) %>%
+  gather(key, value, OxfordPct:NewForestDst) %>%
+  separate(key, c('from', 'measure'), sep = -3) %>%
+  spread(measure, value) %>%
+  rename(percent = Pct, distance = Dst) %>%
+  mutate(from = str_replace(from, 'NewForest', 'New Forest'))
+
+pots
+```
+
+```{r}
+ggplot(pots, aes(distance, percent, color = from)) +
+  geom_point(aes(shape = as.factor(WaterTrans)))
+```
+
+```{r, eval = FALSE}
+ggmap::register_google(key = "<your-api-key-here>")
+
+pots_sites <- pots %>%
+  select(from, to) %>% 
+  gather %>%
+  pull(value) %>%
+  unique %>% 
+  tibble(site = .) %>%
+  mutate(search_term = str_replace_all(site, c('Clausentum' = 'Bitterne', 'Mildenhall' = 'Mildenhall, Wiltshire')),
+         search_term = paste0(search_term, ', UK')) %>%
+  mutate_geocode(search_term) %>%
+  select(-search_term) %>%
+  st_as_sf(coords = c('lon', 'lat'), crs = 4326) %>%
+  bind_cols(., as_tibble(st_coordinates(.))) %>%
+  rename(x = X, y = Y)
+
+saveRDS(pots_sites, 'oxfordpots_locations.RDS')
+```
+
+```{r}
+pots_sites <- readRDS('oxfordpots_locations.RDS') %>%
+  left_join(select(pots, to, WalledArea) %>% group_by(to) %>% 
+              summarise(area = mean(WalledArea)), by = c('site' = 'to'))
+```
+
+```{r, echop = FALSE}
+st_distance(pots_sites) %>%
+  `colnames<-`(pots_sites$site) %>%
+  as_tibble %>%
+  mutate(to = pots_sites$site) %>%
+  gather(from, distance, `New Forest`:Wroxeter) %>%
+  filter(to > from) %>%
+  right_join(dat,by = c('from' = 'origin', 'to' = 'destination')) %>%
+  mutate(distance.x = as.numeric(distance.x) / 1000) %>%
+  ggplot(aes(distance.y, distance.x, color = from)) +
+  geom_point() +
+  geom_label(aes(label = to), alpha = .4)
+```
+
+```{r}
+pots_net <- tbl_graph(nodes = pots_sites, edges = pots) %E>%
+  filter(!is.na(percent)) %>%
+  mutate(similarity = percent / 100)
+```
+
+```{r}
+uk_boundary <- maps::map('world', region = 'UK',
+                    fill = TRUE, plot = FALSE) %>%
+  st_as_sf
+```
+
+```{r}
+pots_net %E>%
+  arrange(percent) %>%
+ggraph() +
+  geom_sf(data = uk_boundary, fill = NA) +
+  geom_edge_link(aes(colour = percent), edge_width = 2, lineend = 'round') +
+  geom_sf(data = filter(pots_sites, site %in% c('Oxford', 'New Forest')), size = 4) +
+  scale_edge_color_distiller(palette = 'YlGnBu', guide = 'legend', name = 'Percentage of pottery \nfrom origin site') +
+  labs(title = 'Ceramic distribution in Roman Britain', subtitle = 'Percentages of late Romano-British pottery produced in Oxford and New Forest') +
+  coord_sf(datum = NA, xlim = c(-6, 2), ylim = c(50, 53.7)) +
+  theme_void()
+```
+
+```{r}
+pots_dat <- pots_net %E>%
+  mutate(water = as.factor(WaterTrans == 1),
+         x = .N()$x[to],
+         y = .N()$y[to]) %>% 
+  as_tibble %>%
+  mutate(from = as.factor(from),
+         to = as.factor(to))
+```
+
+Example of model selection.
+```{r}
+pots_models <- c("s(distance) + from",
+            "s(distance) + water + from",
+            "s(distance, by = water) + water + from") %>%
+  paste('similarity ~', .) %>%
+  tibble(formula_chr = .) %>%
+  mutate(formula = map(formula_chr, as.formula), 
+         model = map(formula, ~gam(.x, method = 'ML', family = betar(), data = pots_dat)),
+         aic = map_dbl(model, AIC)) %>%
+  arrange(aic)
+
+pots_models
+```
+
+Refit the best performing model with REML and investigate.
+```{r}
+m1 <- gam(similarity ~ s(distance, by = water) + water + from,
+          method = 'REML',
+          select = TRUE,
+          family = betar(),
+          data = pots_dat)
+
+summary(m1)
+plot(m1, trans = plogis)
+```
+```{r echo = FALSE}
+tmp1 <- expand.grid(distance = 0:140, water = c(TRUE, FALSE), from = 2)
+predict(m1, tmp1, type = 'response', se.fit = TRUE) %>%
+  bind_cols(tmp1) %>%
+  mutate(fit = fit * 100,
+         lower = fit - 2 * se.fit * 100,
+         upper = fit + 2 * se.fit * 100) %>%
+  ggplot(aes(distance, fit, group = water)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper, fill = water), alpha = .2) +
+  geom_line(aes(y = fit, color = water), size = 1.2) +
+  theme_minimal() +
+  labs(title = 'Estimated distance decay functions', subtitle = 'With and without water transport',
+       x = 'Distance (km)', y = 'Percentage of pottery from origin site')
+```
+
+```{r}
+pots_net %E>%
+  mutate(res = residuals(m1, type = 'response') * 100) %>%
+  arrange(abs(res)) %>%
+ggraph() +
+  geom_sf(data = uk_boundary, fill = NA) +
+  geom_edge_link(aes(colour = res), edge_width = 2, lineend = 'round') +
+  geom_sf(data = filter(pots_sites, site %in% c('Oxford', 'New Forest')), size = 4) +
+  scale_edge_color_distiller(palette = 'RdBu', limits = c(-8, 8), guide = 'legend', name = 'Difference from \nexpectation (%)') +
+  labs(title = 'Ceramic distribution in Roman Britain', subtitle = 'Residuals from distance-only interaction model') +
+  coord_sf(datum = NA, xlim = c(-6, 2), ylim = c(50, 53.7)) +
+  theme_void()
+```
+
+```{r}
+m2 <- gam(similarity ~ s(distance, by = water) + water + from + s(x, y),
+          method = 'REML',
+          select = TRUE,
+          family = betar(),
+          data = pots_dat)
+
+m2 <- pots_dat %>%
+  mutate(res = residuals(m1, type = 'response') * 100) %>%
+  filter(from == '1') %>%
+  gam(res ~  s(x, y),
+          method = 'REML',
+          select = FALSE,
+          data = .)
+
+summary(m2)
+plot(m2)
+```
+
+
+```{r}
+uk_pts <- uk_boundary %>%
+  st_make_grid(cellsize = 0.03, what = 'centers') %>%
+  st_intersection(uk_boundary) %>%
+  st_coordinates %>%
+  as_tibble %>%
+  rename(x = X, y = Y) 
+
+#bind_rows(uk_pts, .id = 'from') %>%
+uk_pts %>%
+  mutate(from = factor(1, levels = c('1', '2')),
+         distance = 50,
+         water = FALSE) %>%
+  mutate(pred = predict(m2, ., type = 'response')) %>%
+ggplot() +
+  geom_raster(aes(x, y, fill = pred)) +
+  scale_fill_viridis_c() +
+  geom_sf(data = uk_boundary, fill = NA) +
+  facet_wrap(~from) +
+  #geom_sf(data = filter(pots_sites, site == 'Oxford'), size = 4) +
+  labs(title = 'Ceramics in Roman Britain', subtitle = 'Distribution of ceramics produced in Oxford') +
+  coord_sf(datum = NA, xlim = c(-6, 2), ylim = c(50, 53.7)) +
+  theme_void()
+```
+```{r}
+
+```
+
+```{r}
+pots_net %E>%
+  
+  filter(from == 2) %>%
+  arrange(percent) %>%
+ggraph() +
+  geom_sf(data = uk_boundary, fill = NA) +
+  geom_edge_link(aes(colour = percent), edge_width = 2, lineend = 'round') +
+  geom_sf(data = filter(pots_sites, site == 'Oxford'), size = 4) +
+  scale_edge_color_distiller(palette = 'YlGnBu', guide = 'legend', name = 'Percent Oxford \nwares') +
+  labs(title = 'Ceramics in Roman Britain', subtitle = 'Distribution of ceramics produced in Oxford') +
+  coord_sf(datum = NA, xlim = c(-6, 2), ylim = c(50, 53.7)) +
+  theme_void()
+  
+```
+
 
 ## Data Import and Preprocessing
 
@@ -206,138 +422,4 @@ mod_time$model %>%
   walk(plot, trans = plogis)
 ```
 
-
-## Oxford Pots
-```{r}
-data("OxfordPots")
-
-dat <- OxfordPots %>%
-  gather(key, value, OxfordPct:NewForestDst) %>%
-  separate(key, c('origin', 'measure'), sep = -3) %>%
-  spread(measure, value) %>%
-  rename(percent = Pct, distance = Dst)
-
-
-ggplot(dat, aes(distance, percent, color = origin)) +
-  geom_point()
-
-
-m1 <- gam(percent ~ s(distance) + Place + origin + as.factor(WaterTrans), data = dat)
-m1
-plot(m1)
-summary(m1)
-dat %>%
-  filter(origin == 'Oxford') %>%
-  select(Place, WalledArea) %>%
-  mutate(distance = 0, WaterTrans = 0, origin = 'Oxford') %>%
-  mutate(preds = predict(m1, .)) %>%
-  ggplot(aes(preds, WalledArea)) +
-  geom_point()
-```
-
-```{r}
-ggmap::register_google(key = "AIzaSyBv3z6j76K40GoAJGfJYDALwI1hU-ucGsA")
-places <- dat %>%
-  pull(Place) %>%
-  unique 
-  
-pts <- ggmap::geocode(paste0(places, ', UK')) %>% 
-  mutate(place = places)
-
-
-ggplot(pts, aes(lon, lat)) +
-  geom_point() +
-  coord_quickmap() +
-  geom_label(aes(label = place))
-```
-
-```{r}
-library(sf)
-origins <- tibble(from = c('Oxford, UK', 'New Forest, UK')) %>%
-  mutate_geocode(from) %>%
-  st_as_sf(coords = c('lon', 'lat')) %>%
-  st_set_crs(4326)
-  
-  
-pts %>% 
- st_as_sf(coords = c('lon', 'lat')) %>%
-  st_set_crs(4326) %>%
-  st_distance(origins) %>%
-  `colnames<-`(c('Oxford', 'NewForest')) %>%
-  as_tibble %>%
-  mutate(to = pts$place) %>%
-  gather(from, distance, Oxford:NewForest) %>%
-  left_join(dat, by = c('from' = 'origin', 'to' = 'Place')) %>%
-  mutate(distance.x = as.numeric(distance.x) / 1000) %>%
-  ggplot(aes(distance.y, distance.x, color = from)) +
-  geom_point() +
-  geom_label(aes(label = to), alpha = .4)
-
-dat
-```
-From this we can see that Wroxeter, Mildenhall, Clausentum and Brough on Humber are susupects
-```{r}
-pts <- places %>%
-  str_replace('Clausentum', 'Bitterne') %>%
-  str_replace('Mildenhall', 'Mildenhall, Wiltshire') %>%
-  paste0(', UK') %>%
-  geocode %>% 
-  mutate(place = places) %>% 
- st_as_sf(coords = c('lon', 'lat')) %>%
-  st_set_crs(4326)
-
-origins <- tibble(from = c('Oxford, UK', 'New Forest, UK')) %>%
-  mutate_geocode(from) %>%
-  st_as_sf(coords = c('lon', 'lat')) %>%
-  st_set_crs(4326)
-  
-  
-dat2<- st_distance(pts, origins) %>%
-  `colnames<-`(c('Oxford', 'NewForest')) %>%
-  as_tibble %>%
-  mutate(to = pts$place) %>%
-  gather(from, distance, Oxford:NewForest) %>%
-  left_join(dat, by = c('from' = 'origin', 'to' = 'Place')) %>%
-  mutate(distance.x = as.numeric(distance.x) / 1000)
-```
-
-That looks much better.
-```{r}
-ggplot(dat2, aes(distance.y, distance.x, color = from)) +
-  geom_point() +
-  geom_label(aes(label = to), alpha = .4)
-```
-
-```{r}
-dat2 <- left_join(pts, dat, by = c('place' = 'Place')) %>%
-  bind_cols(., as_tibble(st_coordinates(.)))
-
-
-dat2 %>%
-  ggplot() +
-  geom_sf() +
-  geom_sf_label(aes(label = place))
-```
-
-```{r}
-m1 <- gam(percent/100 ~ s(distance) + te(X, Y) + origin, method = 'REML', family = betar, data = dat2)
-
-plot(m1, scheme = 2)
-summary(m1)
-
-draw(m1)
-
-m2 <- gam(percent/100 ~ s(distance, k = 5) + te(X, Y, k = 5), method = 'REML', family = betar, data = filter(dat2, origin == 'Oxford'))
-plot(m2)
-
-expand.grid(X = seq(-3, 2, .03), Y = seq(50.5, 54, .03), origin = 'Oxford', distance = 0) %>%
-  mutate(pred = predict(m2, ., type = 'response')) %>%
-  ggplot() +
-  geom_raster(aes(X, Y, fill = pred)) +
-  scale_fill_viridis_c() +
-  geom_sf(data = origins) #+
-  geom_sf_label(data = origins, aes(label = from))
-  
-  gam.check(m1)
-```
 
