@@ -60,12 +60,12 @@ output: posterdown::posterdown_latex
 ---
 
 ```{r, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE, results = 'asis',fig.height = 3.5, fig.width = 4.5, out.width = "100%", warning = FALSE, fig.align = 'center', message = FALSE, dev='cairo_pdf')
+knitr::opts_chunk$set(echo = FALSE, results = 'asis', out.width = "100%", warning = FALSE, fig.align = 'center', message = FALSE, dev='cairo_pdf')
 ```
 
-```{r }
-#library(raster)
-library(archdata)
+```{r}
+#devtools::install_github('brentthorne/posterdown')
+#library(posterdown)
 library(maps)
 library(tidyverse)
 library(readxl)
@@ -76,7 +76,7 @@ library(sf)
 library(corMLPE)
 library(tidygraph)
 library(ggraph)
-data("OxfordPots")
+library(archdata)
 ```
 
 
@@ -94,6 +94,7 @@ Distance is a fundamental constraint on human social interaction. This basic pri
 
 A dataset of Late Romano-British pottery. 
 ```{r}
+data("OxfordPots")
 pots <- OxfordPots %>%
   rename(to = Place) %>%
   gather(key, value, OxfordPct:NewForestDst) %>%
@@ -128,7 +129,7 @@ pots_sites <- readRDS('../oxfordpots_locations.RDS') %>%
   left_join(select(pots, to, WalledArea) %>% group_by(to) %>% 
               summarise(area = mean(WalledArea)), by = c('site' = 'to'))
 
-pots_net <- tbl_graph(nodes = pots_sites, edges = pots) %E>%
+pots_net <- tbl_graph(nodes = pots_sites, edges = pots, directed = TRUE) %E>%
   filter(!is.na(percent)) %>%
   mutate(similarity = percent / 100)
 
@@ -158,27 +159,28 @@ ggraph() +
   theme_void()
 ```
 
-```{r, echo = TRUE}
-m1 <- gam(similarity ~ s(distance, by = water) + water + from,
-          method = 'REML', # algorithm to estimate the GAM
-          select = TRUE, # allow some variables to be selected out
-          family = betar(), # beta distribution between 0 and 1
-          data = pots_dat)
-```
-
-
 ```{r}
 pots_models <- c("s(distance) + from",
             "s(distance) + water + from",
-            "s(distance, by = water) + water + from") %>%
+            "s(distance, by = water) + water + from",
+            "s(distance, m = 2) + s(distance, by = water, m = 1) + water + from") %>%
   paste('similarity ~', .) %>%
   tibble(formula_chr = .) %>%
   mutate(formula = map(formula_chr, as.formula), 
          model = map(formula, ~gam(.x, method = 'ML', family = betar(), data = pots_dat)),
          aic = map_dbl(model, AIC)) %>%
   arrange(aic)
+
 pots_models %>%
   select(formula_chr, aic)
+```
+
+```{r, echo = TRUE}
+m1 <- gam(similarity ~ s(distance, by = water) + water + from,
+          method = 'REML', # algorithm to estimate the GAM
+          select = TRUE, # allow some variables to be selected out
+          family = betar(), # beta distribution between 0 and 1
+          data = pots_dat)
 ```
 
 ```{r echo = FALSE, fig.width=6, fig.height=4}
@@ -213,8 +215,129 @@ ggraph() +
 ## Chumash Marriages
 
 
+```{r}
+chumash <- read.csv('../chumash_marriage.csv', row.names = 1) %>%
+  as.matrix %>% 
+  replace(. == 0, 999) %>% # replace 0 values with 999 temporarily
+  as_tbl_graph(directed = FALSE) %E>%
+  filter(!edge_is_loop()) %>%
+  rename(marriages = weight) %>%
+  mutate(marriages = if_else(marriages == 999, 0, marriages))%N>%
+  mutate(centrality = centrality_degree(weights = marriages))
+```
+
+```{r}
+chumash_locs <- read_csv('../chumash_villages_locations.csv') %>%
+  st_as_sf(coords = c('X', 'Y'), crs = 4326) %>%
+  bind_cols(., as_tibble(st_coordinates(.))) %>%
+  rename(x = X, y = Y) %>%
+  mutate(size = ordered(size, levels = c('hamlet', 'small', 'medium', 'large', 'very large', 'largest')),
+         population = case_when(size == 'hamlet' ~ 15,
+          size == 'small' ~ 30,
+          size == 'medium' ~ 60,
+          size == 'large' ~ 120,
+          size == 'very large' ~ 200,
+          size == 'largest' ~ 300
+          )) 
+
+chumash_net <- left_join(chumash, chumash_locs, by = c('name' = 'village')) %E>%
+  mutate(distance = st_distance(.N()$geometry[from], .N()$geometry[to], by_element = TRUE),
+         distance = as.numeric(distance) / 1000) %>%
+  mutate(eco= case_when(.N()$coastal[from] == .N()$coastal[to] & .N()$coastal[from] == TRUE ~ 'Coastal',
+           .N()$coastal[from] == .N()$coastal[to] & .N()$coastal[from] == FALSE ~ 'Inland',
+           .N()$coastal[from] != .N()$coastal[to] ~ 'Cross Boundary'),
+         eco = as.factor(eco))
+
+ca_boundary <- maps::map('county', region = 'California',
+                    fill = TRUE, plot = FALSE) %>%
+  st_as_sf
+
+```
+
+```{r}
+chumash_net %E>%
+  arrange(marriages) %>%
+  filter(marriages > 0) %>%
+ggraph() +
+  geom_edge_link(aes(colour = marriages, alpha= marriages, width = marriages), lineend = 'round') +
+  geom_node_point(aes(size = population, color = coastal)) +
+  scale_edge_alpha(range = c(.5, 1)) +
+  scale_edge_color_distiller(palette = 'YlGnBu') + 
+  theme_void() +
+  scale_size_area() +
+  coord_quickmap() +
+  geom_sf(data = ca_boundary, fill = NA) +
+  coord_sf(datum = NA, xlim = c(-120.60246, -119.48277), ylim = c(34.38628, 34.74438 ))
+
+```
+468 marriages
+```{r}
+m1 <- chumash_net %E>%
+  as_tibble %>%
+  gamm(marriages ~ s(distance, by = eco) + eco,
+      method = 'REML',
+      select = TRUE,
+      family =  Tweedie(p = 1.1, link = 'log'), #quasipoisson(link = 'log'),
+      correlation = corMLPE(form = ~from + to),
+      data = .)
+  
+
+plot(m1$gam, trans = exp)
+gratia::draw(m1$gam)
+summary(m1$gam)
+summary(m1$lme)
+gam.check(m1$gam)
+
+chumash_net %E>%
+  as_tibble %>%
+  ggplot(aes(distance, marriages)) +
+  geom_point() +
+  geom_smooth()
+```
+
+```{r echo = FALSE}
+tmp1 <- expand.grid(distance = 0:60, eco = c('Coastal', 'Cross Boundary', 'Inland')) #= c('TRUE', 'FALSE'))
+predict(m1$gam, tmp1, type = 'response', se.fit = TRUE) %>%
+  bind_cols(tmp1) %>%
+  mutate(fit = fit,
+         lower = fit - 2 * se.fit,
+         upper = fit + 2 * se.fit) %>%
+  ggplot(aes(distance, fit, group = eco)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper, fill = eco), alpha = .2) +
+  geom_line(aes(y = fit, color = eco), size = 1.2) +
+  theme_classic() +
+  labs(title = 'Estimated distance decay functions', subtitle = 'Within and across ecological boundaries',
+       x = 'Distance (km)', y = 'Number of marriages')
+```
+
+```{r}
+tmp2 <- match(predict(m1$gam), predict(m1$lme))
+
+predict(m1$gam) == predict(m1$lme)
+
+chumash_net %E>%
+  mutate(pred = predict(m1$lme),
+         pred2 = predict(m1$gam, type = 'response'),
+         res = marriages - exp(pred)) %>%
+  #mutate(res = residuals(m1$gam, type = 'response')) %>%
+  arrange(abs(res)) %>%
+  filter(marriages != 0) %>%
+ggraph() +
+  geom_edge_link(aes(colour = res, alpha= res, width = res), lineend = 'round') +
+  geom_node_point(aes(size = population, color = coastal)) +
+  scale_edge_alpha(range = c(.5, 1)) +
+  scale_edge_color_distiller(palette = 'RdBu', limits = c(-10, 10)) + 
+  theme_void() +
+  scale_size_area() +
+  coord_quickmap() +
+  geom_sf(data = ca_boundary, fill = NA) +
+  coord_sf(datum = NA, xlim = c(-120.60246, -119.48277), ylim = c(34.38628, 34.74438 ))
+```
 
 # Next Steps
+Problems:
+symmetrical vs asymmetrical
+lots of zeros
 
 Don't like GAMs? Check out:
 1. GERGMS
