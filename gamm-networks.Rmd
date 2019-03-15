@@ -8,11 +8,15 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
+GAMMs are a flexible form of regression model well-matched to the complexities of the archaeological record, including non-normal distributions in the form of counts or proportions, non-independent observations with correlated errors, and non-linear functional relationships. Using two case studies -- an ethnographic marriage network and an archaeological assemblage similarity network -- I illustrate how this approach can lead to unbiased parameter estimates and more robust comparisons of competing hypotheses. I conclude by outlining how future empirical efforts can help to refine our thinking about past network dynamics and reveal cross-cultural regularities of human social interaction in the present day.
 
+# Case Studies
+
+Distance is a fundamental constraint on human social interaction. This basic principle motivates the use of spatial interaction models for estimating flows of people, information, and resources on spatial and social networks. These models have both valid dynamical and statistical interpretations, a key strength well supported by theory and data from geography, economics, ecology, and genetics. To date, archaeologists have primarily relied on the dynamical approach because the idiosyncrasies of archaeological data make the wholesale adoption of statistical approaches from other fields impractical.
 # Setup
 
 ```{r }
-#library(raster)
+library(raster)
 library(archdata)
 library(maps)
 library(tidyverse)
@@ -72,14 +76,14 @@ pots_sites <- readRDS('oxfordpots_locations.RDS') %>%
               summarise(area = mean(WalledArea)), by = c('site' = 'to'))
 ```
 
-```{r, echo = FALSE}
+```{r, eval = FALSE}
 st_distance(pots_sites) %>%
   `colnames<-`(pots_sites$site) %>%
   as_tibble %>%
   mutate(to = pots_sites$site) %>%
   gather(from, distance, `New Forest`:Wroxeter) %>%
   filter(to > from) %>%
-  right_join(dat,by = c('from' = 'origin', 'to' = 'destination')) %>%
+  right_join(dat, by = c('from' = 'origin', 'to' = 'destination')) %>%
   mutate(distance.x = as.numeric(distance.x) / 1000) %>%
   ggplot(aes(distance.y, distance.x, color = from)) +
   geom_point() +
@@ -180,144 +184,149 @@ ggraph() +
 
 ```{r}
 chumash <- read.csv('chumash_marriage.csv', row.names = 1) %>%
-  as.matrix %>%
+  as.matrix %>% 
+  replace(. == 0, 999) %>% # replace 0 values with 999 temporarily
   as_tbl_graph(directed = FALSE) %E>%
-  filter(!edge_is_loop()) %N>%
-  mutate(centrality = centrality_degree())
+  filter(!edge_is_loop()) %>%
+  rename(marriages = weight) %>%
+  mutate(marriages = if_else(marriages == 999, 0, marriages))%N>%
+  mutate(centrality = centrality_degree(weights = marriages))
 ```
 
 ```{r}
-raster('chumash_map_georeferenced.tif') %>% plot
-```
+chumash_locs <- read_csv('chumash_villages_locations.csv') %>%
+  st_as_sf(coords = c('X', 'Y'), crs = 4326) %>%
+  bind_cols(., as_tibble(st_coordinates(.))) %>%
+  rename(x = X, y = Y) %>%
+  mutate(size = ordered(size, levels = c('hamlet', 'small', 'medium', 'large', 'very large', 'largest')),
+         population = case_when(size == 'hamlet' ~ 15,
+          size == 'small' ~ 30,
+          size == 'medium' ~ 60,
+          size == 'large' ~ 120,
+          size == 'very large' ~ 200,
+          size == 'largest' ~ 300
+          )) 
 
-```{r}
-ggraph(chumash) +
-  geom_edge_link(aes(width = weight), alpha = .1) +
-  geom_node_point(aes(size = centrality)) +
-  theme_void()
-```
+chumash_net <- left_join(chumash, chumash_locs, by = c('name' = 'village')) %E>%
+  mutate(distance = st_distance(.N()$geometry[from], .N()$geometry[to], by_element = TRUE),
+         distance = as.numeric(distance) / 1000) %>%
+  mutate(eco= case_when(.N()$coastal[from] == .N()$coastal[to] & .N()$coastal[from] == TRUE ~ 'Coastal',
+           .N()$coastal[from] == .N()$coastal[to] & .N()$coastal[from] == FALSE ~ 'Inland',
+           .N()$coastal[from] != .N()$coastal[to] ~ 'Cross Boundary'),
+         eco = as.factor(eco),
+         eco_same = as.factor(.N()$coastal[from] == .N()$coastal[to]))
 
-```{r}
-stamps <- read_delim('stamps.csv', delim = ';')
-
-stamps %>%
-  group_by(site) %>%
-  count %>%
-  pull(n) %>% range
-  ggplot(aes(n)) +
-  geom_histogram()
-
-
-ggplot(stamps, aes (lat, long)) +
-  geom_density2d()
-
-```
-
-
-## iriquois
-```{r}
-lcp_groups <- read_xlsx('pone.0209689.s001.xlsx', sheet = 1) %>%
-  rename(from = 1) %>%
-  gather(to, lcp, 2:14)
-
-euc_groups <- read_xlsx('pone.0209689.s001.xlsx', sheet = 3) %>%
-  rename(from = 1) %>%
-  gather(to, euc, 2:14) %>%
-  mutate_if(is.character, ~str_replace_all(., ', ', '-')) %>%
-  mutate_if(is.character, ~str_replace(., 'Trent River', 'Trent Valley')) %>%
-  mutate_if(is_character, ~str_replace(., 'Lake Erie Plain-Niagara Frontier', 'Lake Erie Plain'))
-
-br_groups <- read_xlsx('pone.0209689.s001.xlsx', sheet = 2) %>%
-  rename(from = Cluster) %>%
-  gather(to, similarity, 2:14) %>%
-  mutate_if(is.character, ~str_replace_all(., ', ', '-')) %>%
-  mutate_if(is.character, ~str_replace(., 'Trent River', 'Trent Valley')) %>%
-  mutate_if(is_character, ~str_replace(., 'Lake Erie Plain-Niagara Frontier', 'Lake Erie Plain'))
-```
-
-```{r}
-iriquois_dat <- full_join(lcp_groups, br_groups) %>%
-  full_join(euc_groups) %>%
-  filter(from < to )
-
-iriquois_dat
-```
-
-```{r}
-m1 <- gam(similarity ~ s(lcp), data = iriquois_dat, method = 'ML')
-m2 <- gam(similarity ~ s(lcp), family = betar(), data = iriquois_dat, method = 'ML')
-m3 <- gamm(qlogis(similarity) ~ s(lcp), data = iriquois_dat, correlation = corMLPE(form = ~from + to), method = 'ML')
-plot(m3$gam, trans = plogis)
-
-summary(m3$gam)
-ggraph(net) +
-  geom_edge_link()+
-  geom_node_point()
-```
-Check this: model without correlation structure shows a nonlinear effect, mainly because of a cluster of links at high distances that have moderate similarity.
-```{r}
-plot(m2, trans = plogis)
-```
-But all of these links come from the same site, so they are not independent. Adding the correlation structure fixes this
-```{r}
-plot(m3$gam, trans = plogis)
-```
-
-```{r}
-m3$lme
-# rho of 0.35!
-```
-
-```{r}
-sites_groups <- read_xlsx('pone.0209689.s001.xlsx', sheet = 4, range = 'A2:B98')
-
-br_sites_1400_1500 <- read_xlsx('pone.0209689.s001.xlsx', sheet = 4, range = 'C2:CU98') %>%
-  rename(from = Site) %>%
-  gather(to, similarity, 2:97) %>%
-  mutate(similarity = similarity / 200)
-dist_sites_1400_1450 <- read_xlsx('pone.0209689.s001.xlsx', sheet = 7, range = 'B2:CT98') %>%
-  rename(from = Site) %>%
-  gather(to, distance, 2:97) %>%
-  mutate_if(is.character, ~str_replace(., 'Otstungo', 'Otsungo'))
-
-
-br_sites_1450_1550 <- read_xlsx('pone.0209689.s001.xlsx', sheet = 5, range = 'B2:CA79') %>%
-  rename(from = Site) %>%
-  gather(to, similarity, 2:78) %>%
-  mutate(similarity = similarity / 200)
-dist_sites_1450_1550 <- read_xlsx('pone.0209689.s001.xlsx', sheet = 8, range = 'B2:CA79') %>%
-  rename(from = Site) %>%
-  gather(to, distance, 2:78) %>%
-  mutate_if(is.character, ~str_replace(., 'Otstungo', 'Otsungo')) %>%
-  mutate_if(is.character, ~str_replace(., '27/VII', '27VII'))
-
-br_sites_1500_1600 <- read_xlsx('pone.0209689.s001.xlsx', sheet = 6, range = 'B2:BN66') %>%
-  rename(from = Site) %>%
-  gather(to, similarity, 2:65) %>%
-  mutate(similarity = similarity / 200) %>%
-  mutate_if(is.character, ~str_replace(., 'Wagners', "Wagner's"))
-dist_sites_1500_1600 <- read_xlsx('pone.0209689.s001.xlsx', sheet = 9, range = 'B2:BN66') %>%
-  rename(from = Site) %>%
-  gather(to, distance, 2:65) %>%
-  mutate_if(is.character, ~str_replace(., '27/VII', '27VII'))
+ca_boundary <- maps::map('county', region = 'California',
+                    fill = TRUE, plot = FALSE) %>%
+  st_as_sf
 
 ```
 
 ```{r}
-dat <- bind_rows(left_join(br_sites_1400_1500, dist_sites_1400_1450),
-                 left_join(br_sites_1450_1550, dist_sites_1450_1550),
-                 left_join(br_sites_1500_1600, dist_sites_1500_1600),
-                 .id = 'time') %>%
-  filter(from < to & similarity > 0)
+chumash_net %E>%
+  arrange(marriages) %>%
+  filter(marriages > 0) %>%
+ggraph() +
+  geom_edge_link(aes(colour = marriages, alpha= marriages, width = marriages), lineend = 'round') +
+  geom_node_point(aes(size = population, color = coastal)) +
+  scale_edge_alpha(range = c(.5, 1)) +
+  scale_edge_color_distiller(palette = 'YlGnBu') + 
+  theme_void() +
+  scale_size_area() +
+  coord_quickmap() +
+  geom_sf(data = ca_boundary, fill = NA) +
+  coord_sf(datum = NA, xlim = c(-120.60246, -119.48277), ylim = c(34.38628, 34.74438 ))
 
-  # inner_join(sites_groups, by = c('from'='Site')) %>%
-  # inner_join(sites_groups, by = c('to'='Site')) %>%
-  # mutate(same_region = Group.x == Group.y) %>%
-  # select(-c(Group.x, Group.y))
-
-
-qplot(distance, similarity, color = time, data = dat, geom = 'point') + geom_smooth()
 ```
+468 marriages
+```{r}
+
+test <- seq(1.10, 1.30, .01) %>%
+  map(~gamm(marriages ~ s(distance, by = eco) + eco,
+      method = 'REML',
+      select = TRUE,
+      family =  Tweedie(p = .x, link = 'log'), #quasipoisson(link = 'log'),
+      correlation = corMLPE(form = ~from + to),
+      data =   as_tibble(activate(chumash_net, 'edges'))))
+
+test2 <- seq(1.10, 1.30, .01) %>%
+  map(~gamm(marriages ~ s(distance, by = eco_same) + eco_same,
+      method = 'REML',
+      select = TRUE,
+      family =  Tweedie(p = .x, link = 'log'), #quasipoisson(link = 'log'),
+      correlation = corMLPE(form = ~from + to),
+      data =   as_tibble(activate(chumash_net, 'edges'))))
+  
+map(test, ~(.$lme) %>% AIC)
+map(test2, ~(.$lme) %>% AIC) %>% unlist %>% plot
+
+m1 <- gamm(marriages ~ s(distance, by = eco) + eco,
+      method = 'REML',
+      select = TRUE,
+      family =  Tweedie(p = 1.2, link = 'log'), #quasipoisson(link = 'log'),
+      correlation = corMLPE(form = ~from + to),
+      data =   as_tibble(activate(chumash_net, 'edges')))
+m2 <- gamm(marriages ~ s(distance, by = eco) + eco,
+      method = 'REML',
+      select = TRUE,
+      family =  quasipoisson(link = 'log'),
+      correlation = corMLPE(form = ~from + to),
+      data =   as_tibble(activate(chumash_net, 'edges')))
+AIC(m2)
+
+plot(m1$gam, trans = exp)
+gratia::draw(m1$gam)
+summary(m1$gam)
+summary(m1$lme)
+gam.check(m1$gam)
+
+chumash_net %E>%
+  as_tibble %>%
+  ggplot(aes(distance, marriages)) +
+  geom_point() +
+  geom_smooth()
+```
+
+```{r echo = FALSE}
+tmp1 <- expand.grid(distance = 0:60, eco = c('Coastal', 'Cross Boundary', 'Inland')) #= c('TRUE', 'FALSE'))
+predict(m1$gam, tmp1, type = 'response', se.fit = TRUE) %>%
+  bind_cols(tmp1) %>%
+  mutate(fit = fit,
+         lower = fit - 2 * se.fit,
+         upper = fit + 2 * se.fit) %>%
+  ggplot(aes(distance, fit, group = eco)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper, fill = eco), alpha = .2) +
+  geom_line(aes(y = fit, color = eco), size = 1.2) +
+  theme_classic() +
+  labs(title = 'Estimated distance decay functions', subtitle = 'Within and across ecological boundaries',
+       x = 'Distance (km)', y = 'Number of marriages')
+```
+
+```{r}
+tmp2 <- match(predict(m1$gam), predict(m1$lme))
+
+predict(m1$gam) == predict(m1$lme)
+
+chumash_net %E>%
+  mutate(pred = predict(m1$lme),
+         pred2 = predict(m1$gam, type = 'response'),
+         res = marriages - exp(pred)) %>%
+  #mutate(res = residuals(m1$gam, type = 'response')) %>%
+  arrange(abs(res)) %>%
+  filter(marriages != 0) %>%
+ggraph() +
+  geom_edge_link(aes(colour = res, alpha= res, width = res), lineend = 'round') +
+  geom_node_point(aes(size = population, color = coastal)) +
+  scale_edge_alpha(range = c(.5, 1)) +
+  scale_edge_color_distiller(palette = 'RdBu', limits = c(-10, 10)) + 
+  theme_void() +
+  scale_size_area() +
+  coord_quickmap() +
+  geom_sf(data = ca_boundary, fill = NA) +
+  coord_sf(datum = NA, xlim = c(-120.60246, -119.48277), ylim = c(34.38628, 34.74438 ))
+```
+
+
 
 ```{r}
 m1 <- gamm(qlogis(similarity) ~ s(distance, bs = 'cr') + as.factor(time), 
