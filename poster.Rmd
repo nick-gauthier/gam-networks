@@ -41,7 +41,7 @@ columnline_col: "008080" #colour
 columnline_width: "0pt" #width of line between each column
 #SECTION TITLE STYLING
 sectitle_textcol: "ffffff" # Colour of the poster section titles
-sectitle_bgcol: "253494" # Colour of the section title box
+sectitle_bgcol: "41b6c4" # Colour of the section title box
 sectitle_bordercol: "41b6c4" # Colour of the border around the section title box.
 sectitle_borderwidth: "2mm" # Thicknes of the section title box border
 sectitle_boxshape: "uphill" # Changes the shape of the section title box.
@@ -60,7 +60,7 @@ output: posterdown::posterdown_latex
 ---
 
 ```{r, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE, results = 'asis', out.width = "100%", warning = FALSE, fig.align = 'center', message = FALSE, dev='cairo_pdf')
+knitr::opts_chunk$set(echo = FALSE, results = 'asis', out.width = "80%", warning = FALSE, fig.align = 'center', message = FALSE, dev='cairo_pdf')
 ```
 
 ```{r}
@@ -79,9 +79,9 @@ library(ggraph)
 library(archdata)
 ```
 
-# What's a GAMM?
+# What are GAMMs?
 
-GAMMs are a flexible form of regression model well-matched to the complexities of the archaeological record, including non-normal distributions such as counts or proportions, non-linear functional relationships, and non-independent observations with correlated errors.
+Generalized additive mixed models (GAMMs) are a flexible form of regression model well-matched to the complexities of the archaeological record, including non-normal distributions such as counts or proportions, non-linear functional relationships, and non-independent observations with correlated errors.
 
 \vspace{1cm}
 
@@ -91,19 +91,145 @@ GAMMs are a flexible form of regression model well-matched to the complexities o
 * *Additive* -- Additive function of smooth functions. 
 * *Mixed* -- Random effects to model network autocorrelation
 
-# How do they work?
-
-Penalized plines are the secret sauce that make GAMs so useful. They allow us estimate functional forms directly from the data, while attempting to minimize overfitting by penalized the ``wiggliness'' of the function.
-
-![](Figures/spline3.png)\
-
 # What can I do with them?
 
-Alot! Let's look at two examples.
+Plenty! In archaeology, they're particuarly useful for fitting so-called ``gravity'' style spatial interaction models. Most archaeological network data proxy for some kind of *flow* -- goods, people, information -- between spatially-structured populations. Even aspatial network data can be modeled using the same basic structure (actor models):
+
+\vspace{1cm}
+
+$flow = f\left(origin\right) \times f\left(destination\right) \times f\left(distance\right)$
+
+```{r}
+tbl_graph(nodes = tibble(size = c(50, 100, 150), x = 1:3, y = c(1,2,1)), 
+          edges = expand.grid(from = 1:3, to = 1:3)) %E>%
+  mutate(distance = sqrt((.N()$x[from] - .N()$x[to])^2 + (.N()$y[from] - .N()$y[to])^2),
+         weight = .N()$size[from]^1.15 * .N()$size[to] * exp(-0.15 * distance)) %>%
+  ggraph() +
+  geom_edge_fan(aes(width = weight, alpha = ..index.., color = weight), show.legend = FALSE) +
+  geom_node_point(aes(size = size), show.legend = FALSE) +
+ scale_size(range = c(5,15)) +
+ scale_edge_color_distiller(palette = 'YlGnBu') +
+  scale_color_distiller(palette = 'YlGnBu') +
+  theme_void() 
+```
+
+The tricky part comes when we actually have to define all the $f\left(\right)$s. This is where splines come in handy.
+
+
+# How do they work?
+
+Penalized plines are the secret sauce that make GAMs so useful. They allow us estimate smooth functional forms directly from the data, rather than trying to fit the data to some prespecified function. They minimize overfitting by penalizing the ``wiggliness'' of the function.
+
+\begin{center}
+\includegraphics{Figures/spline3.png}
+\end{center}
+
+# Give me some examples!
+
+## Chumash Marriages
+
+```{r}
+chumash_villages <- read_csv('data/chumash_villages.csv') %>%
+  st_as_sf(coords = c('x', 'y'), crs = 4326) %>%
+  bind_cols(., as_tibble(st_coordinates(.))) %>%
+  rename(x = X, y = Y) %>%
+  mutate(size = ordered(size, levels = c('hamlet', 'small', 'medium', 'large', 'very large', 'largest'))) 
+
+chumash_net <- read.csv('data/chumash_marriages.csv', row.names = 1) %>%
+  as.matrix %>% 
+  replace(. == 0, 999) %>% # replace 0 values with 999 temporarily
+  as_tbl_graph(directed = FALSE) %E>%
+  filter(!edge_is_loop()) %>%
+  rename(marriages = weight) %>%
+  mutate(marriages = if_else(marriages == 999, 0, marriages))%N>%
+  mutate(centrality = centrality_degree(weights = marriages)) %>%
+  left_join(chumash_villages, by = c('name' = 'village')) %E>%
+  mutate(distance = st_distance(.N()$geometry[from], .N()$geometry[to], by_element = TRUE),
+         distance = as.numeric(distance) / 1000,
+         population = .N()$baptisms[from] * .N()$baptisms[to],
+         population_add = .N()$baptisms[from] + .N()$baptisms[to],
+         eco_same = as.factor(.N()$coastal[from] == .N()$coastal[to]))
+
+ca_boundary <- maps::map('county', region = 'California',
+                    fill = TRUE, plot = FALSE) %>%
+  st_as_sf
+```
+
+```{r}
+chumash_net %E>%
+  arrange(marriages) %>%
+  filter(marriages > 0) %>%
+ggraph() +
+  geom_edge_link(aes(colour = marriages, alpha = marriages), width = 1.5, lineend = 'round') +
+  geom_node_point(aes(size = baptisms)) +
+  scale_edge_alpha(range = c(.6, 1)) +
+  scale_edge_color_distiller(palette = 'YlGnBu', guide = 'legend') + 
+  theme_void() +
+  scale_size_area(name = 'Population (est)') +
+  coord_quickmap()+
+  theme(legend.position = 'bottom')
+  #geom_sf(data = ca_boundary, fill = NA) +
+  #coord_sf(datum = NA, xlim = c(-120.60246, -119.48277), ylim = c(34.38628, 34.74438 ))
+```
+468 marriages
+```{r, include = FALSE}
+m1 <- gamm(marriages ~ te(distance, population) + eco_same,
+      method = 'REML',
+      select = TRUE,
+      family =  quasipoisson(),#Tweedie(p = 1.2, link = 'log'),
+      correlation = corMLPE(form = ~from + to),
+      data =  as_tibble(activate(chumash_net, 'edges')))
+```
+
+```{r}
+vis.gam(m1$gam, view = c('distance', 'population'), theta = 40, phi = 20, type = 'response', se = -1, color = 'bw')
+```
+
+```{r}
+tmp1 <- expand.grid(distance = 0:40, population = 100, eco_same = c('TRUE', 'FALSE'))
+predict(m1$gam, tmp1, type = 'response', se.fit = TRUE) %>%
+  bind_cols(tmp1) %>%
+  mutate(fit = fit,
+         lower = fit - 2 * se.fit,
+         upper = fit + 2 * se.fit) %>%
+  ggplot(aes(distance, fit, group = eco_same)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper, fill = eco_same), alpha = .2) +
+  geom_line(aes(y = fit, color = eco_same), size = 1.5) +
+  scale_color_manual(values = c('#253494', '#41b6c4')) +
+  scale_fill_manual(values = c('#253494', '#41b6c4')) +
+  theme_classic() +
+  labs(title = 'Estimated distance decay functions', subtitle = 'Within and across ecological boundaries',
+       x = 'Distance (km)', y = 'Number of marriages')
+```
+
+```{r, eval = FALSE}
+#tmp2 <- match(predict(m1$gam), predict(m1$lme))
+
+#predict(m1$gam) == predict(m1$lme)
+
+chumash_net %E>%
+  mutate(pred = predict(m1$lme),
+         pred2 = predict(m1$gam, type = 'response'),
+         res = marriages - exp(pred)) %>%
+  #mutate(res = residuals(m1$gam, type = 'response')) %>%
+  arrange(abs(res)) %>%
+  filter(marriages != 0) %>%
+ggraph() +
+  geom_edge_link(aes(colour = res, alpha= res, width = res), lineend = 'round') +
+  geom_node_point(aes(size = baptisms, color = coastal)) +
+  scale_edge_alpha(range = c(.5, 1)) +
+  scale_edge_color_distiller(palette = 'RdBu', limits = c(-8, 8)) + 
+  theme_void() +
+  scale_size_area() +
+  coord_quickmap() +
+  geom_sf(data = ca_boundary, fill = NA) +
+  coord_sf(datum = NA, xlim = c(-120.60246, -119.48277), ylim = c(34.38628, 34.74438 ))
+```
+
 
 ## Oxford Pots
 
-A dataset of Late Romano-British pottery. 
+A dataset of Late Romano-British pottery. We have data for the percentage of the ceramic assemblage at 30 sites that were produced at Oxford or New Forest, and want to understand something about how these pots were moved over space.
 ```{r}
 data("OxfordPots")
 pots <- OxfordPots %>%
@@ -150,7 +276,11 @@ ggraph() +
   theme_void()
 ```
 
-```{r, echo = TRUE}
+
+We can model this data in R.
+$logit\left(proportion\right) = f\left(distance\right) + origin$
+
+```{r}
 m1 <- gam(similarity ~ s(distance, by = water) + water + from,
           method = 'REML', # algorithm to estimate the GAM
           select = TRUE, # allow some variables to be selected out
@@ -158,7 +288,8 @@ m1 <- gam(similarity ~ s(distance, by = water) + water + from,
           data = pots_dat)
 ```
 
-```{r echo = FALSE, fig.width=6, fig.height=4}
+We can look at the spline functions fit by the GAM. These suggest that overland travel is subject to logarithmic distance decay, but water transport seems to have no such constraints. 
+```{r}
 tmp1 <- expand.grid(distance = 0:140, water = c(TRUE, FALSE), from = 2)
 predict(m1, tmp1, type = 'response', se.fit = TRUE) %>%
   bind_cols(tmp1) %>%
@@ -175,6 +306,7 @@ predict(m1, tmp1, type = 'response', se.fit = TRUE) %>%
        x = 'Distance (km)', y = 'Percentage of pottery from origin site')
 ```
 
+By examining the residuals of the distance only spatial interaction model, we can isolate network links that are unusually strong or weak than we would expect if distance alone were influencing interaction.
 ```{r}
 pots_net %E>%
   mutate(res = residuals(m1, type = 'response') * 100) %>%
@@ -189,116 +321,9 @@ ggraph() +
   theme_void()
 ```
 
-## Chumash Marriages
-
-
-```{r}
-chumash <- read.csv('data/chumash_marriage.csv', row.names = 1) %>%
-  as.matrix %>% 
-  replace(. == 0, 999) %>% # replace 0 values with 999 temporarily
-  as_tbl_graph(directed = FALSE) %E>%
-  filter(!edge_is_loop()) %>%
-  rename(marriages = weight) %>%
-  mutate(marriages = if_else(marriages == 999, 0, marriages))%N>%
-  mutate(centrality = centrality_degree(weights = marriages))
-```
-
-```{r}
-chumash_locs <- read_csv('data/chumash_villages_locations.csv') %>%
-  st_as_sf(coords = c('X', 'Y'), crs = 4326) %>%
-  bind_cols(., as_tibble(st_coordinates(.))) %>%
-  rename(x = X, y = Y) %>%
-  mutate(size = ordered(size, levels = c('hamlet', 'small', 'medium', 'large', 'very large', 'largest')),
-         population = case_when(size == 'hamlet' ~ 15,
-          size == 'small' ~ 30,
-          size == 'medium' ~ 60,
-          size == 'large' ~ 120,
-          size == 'very large' ~ 200,
-          size == 'largest' ~ 300
-          )) 
-
-chumash_net <- left_join(chumash, chumash_locs, by = c('name' = 'village')) %E>%
-  mutate(distance = st_distance(.N()$geometry[from], .N()$geometry[to], by_element = TRUE),
-         distance = as.numeric(distance) / 1000) %>%
-  mutate(eco_same = as.factor(.N()$coastal[from] == .N()$coastal[to]))
-
-ca_boundary <- maps::map('county', region = 'California',
-                    fill = TRUE, plot = FALSE) %>%
-  st_as_sf
-
-```
-
-```{r}
-chumash_net %E>%
-  arrange(marriages) %>%
-  filter(marriages > 0) %>%
-ggraph() +
-  geom_edge_link(aes(colour = (marriages), alpha= marriages), width = 1.5, lineend = 'round') +
-  geom_node_point(aes(size = population)) +
-  scale_edge_alpha(range = c(.6, 1)) +
-  scale_edge_color_distiller(palette = 'YlGnBu', guide = 'legend') + 
-  theme_void() +
-  scale_size_area(name = 'Population (est)') +
-  coord_quickmap()+
-  theme(legend.position = 'bottom')
-  #geom_sf(data = ca_boundary, fill = NA) +
-  #coord_sf(datum = NA, xlim = c(-120.60246, -119.48277), ylim = c(34.38628, 34.74438 ))
-
-```
-468 marriages
-```{r, message = FALSE, warning = FALSE}
-m1 <- gamm(marriages ~ s(distance, by = eco_same) + eco_same,
-      method = 'REML',
-      select = TRUE,
-      family =  Tweedie(p = 1.2, link = 'log'),
-      correlation = corMLPE(form = ~from + to),
-      data =   as_tibble(activate(chumash_net, 'edges')))
-```
-
-```{r, fig.width=6, fig.height=4}
-tmp1 <- expand.grid(distance = 0:60, eco_same = c('TRUE', 'FALSE'))
-predict(m1$gam, tmp1, type = 'response', se.fit = TRUE) %>%
-  bind_cols(tmp1) %>%
-  mutate(fit = fit,
-         lower = fit - 2 * se.fit,
-         upper = fit + 2 * se.fit) %>%
-  ggplot(aes(distance, fit, group = eco_same)) +
-  geom_ribbon(aes(ymin = lower, ymax = upper, fill = eco_same), alpha = .2) +
-  geom_line(aes(y = fit, color = eco_same), size = 1.5) +
-  scale_color_manual(values = c('#253494', '#41b6c4')) +
-  scale_fill_manual(values = c('#253494', '#41b6c4')) +
-  theme_classic() +
-  labs(title = 'Estimated distance decay functions', subtitle = 'Within and across ecological boundaries',
-       x = 'Distance (km)', y = 'Number of marriages')
-```
-
-```{r, eval = FALSE}
-#tmp2 <- match(predict(m1$gam), predict(m1$lme))
-
-#predict(m1$gam) == predict(m1$lme)
-
-chumash_net %E>%
-  mutate(pred = predict(m1$lme),
-         pred2 = predict(m1$gam, type = 'response'),
-         res = marriages - exp(pred)) %>%
-  #mutate(res = residuals(m1$gam, type = 'response')) %>%
-  arrange(abs(res)) %>%
-  filter(marriages != 0) %>%
-ggraph() +
-  geom_edge_link(aes(colour = res, alpha= res, width = res), lineend = 'round') +
-  geom_node_point(aes(size = population, color = coastal)) +
-  scale_edge_alpha(range = c(.5, 1)) +
-  scale_edge_color_distiller(palette = 'RdBu', limits = c(-10, 10)) + 
-  theme_void() +
-  scale_size_area() +
-  coord_quickmap() +
-  geom_sf(data = ca_boundary, fill = NA) +
-  coord_sf(datum = NA, xlim = c(-120.60246, -119.48277), ylim = c(34.38628, 34.74438 ))
-```
 
 # I want to analyze my own data
 
-#Moar
 
 # Next Steps
 Problems:
