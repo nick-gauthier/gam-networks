@@ -378,4 +378,14 @@ mod_time$model %>%
   walk(plot, trans = plogis)
 ```
 
+# Next Steps
+Problems:
+symmetrical vs asymmetrical
+lots of zeros
+
+Don't like GAMs? Check out:
+1. GERGMS
+2. AME models
+3. BRMS bayesian implementation?
+The underlying concepts are similar, they only differ in how you estimate them
 
