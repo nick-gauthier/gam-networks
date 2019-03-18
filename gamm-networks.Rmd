@@ -326,7 +326,7 @@ ggraph() +
   coord_sf(datum = NA, xlim = c(-120.60246, -119.48277), ylim = c(34.38628, 34.74438 ))
 ```
 
-
+We can look at the spline functions fit by the GAM. These suggest that overland travel is subject to logarithmic distance decay, but water transport seems to have no such constraints. This is a case where we've used penalization as form of model selection. The data showed no signal of a distance effect for water transport, so the penalized spline was reduced to a flat line.
 
 ```{r}
 m1 <- gamm(qlogis(similarity) ~ s(distance, bs = 'cr') + as.factor(time), 
@@ -389,3 +389,43 @@ Don't like GAMs? Check out:
 3. BRMS bayesian implementation?
 The underlying concepts are similar, they only differ in how you estimate them
 
+```{r, eval = FALSE}
+tmp1 <- expand.grid(distance = 0:40, population = 100, eco_same = c('TRUE', 'FALSE'))
+predict(m1$gam, tmp1, type = 'response', se.fit = TRUE) %>%
+  bind_cols(tmp1) %>%
+  mutate(fit = fit,
+         lower = fit - 2 * se.fit,
+         upper = fit + 2 * se.fit) %>%
+  ggplot(aes(distance, fit, group = eco_same)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper, fill = eco_same), alpha = .2) +
+  geom_line(aes(y = fit, color = eco_same), size = 1.5) +
+  scale_color_manual(values = c('#253494', '#41b6c4')) +
+  scale_fill_manual(values = c('#253494', '#41b6c4')) +
+  theme_classic() +
+  labs(x = 'Distance (km)', y = 'Number of marriages')
+title = 'Estimated distance decay functions', subtitle = 'Within and across ecological boundaries',
+```
+
+```{r, eval = FALSE}
+#tmp2 <- match(predict(m1$gam), predict(m1$lme))
+
+#predict(m1$gam) == predict(m1$lme)
+
+chumash_net %E>%
+  mutate(pred = predict(m1$lme),
+         pred2 = predict(m1$gam, type = 'response'),
+         res = marriages - exp(pred)) %>%
+  #mutate(res = residuals(m1$gam, type = 'response')) %>%
+  arrange(abs(res)) %>%
+  filter(marriages != 0) %>%
+ggraph() +
+  geom_edge_link(aes(colour = res, alpha= res, width = res), lineend = 'round') +
+  geom_node_point(aes(size = baptisms, color = coastal)) +
+  scale_edge_alpha(range = c(.5, 1)) +
+  scale_edge_color_distiller(palette = 'RdBu', limits = c(-8, 8)) + 
+  theme_void() +
+  scale_size_area() +
+  coord_quickmap() +
+  geom_sf(data = ca_boundary, fill = NA) +
+  coord_sf(datum = NA, xlim = c(-120.60246, -119.48277), ylim = c(34.38628, 34.74438 ))
+```

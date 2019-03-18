@@ -60,7 +60,7 @@ output: posterdown::posterdown_latex
 ---
 
 ```{r, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE, results = 'asis', out.width = "80%", warning = FALSE, fig.align = 'center', message = FALSE, dev='cairo_pdf')
+knitr::opts_chunk$set(echo = FALSE, results = 'asis', out.width = "80%", warning = FALSE, fig.align = 'center', message = FALSE, dev='cairo_pdf', cache = TRUE)
 ```
 
 ```{r}
@@ -81,27 +81,24 @@ library(archdata)
 
 # What are GAMMs?
 
-Generalized additive mixed models (GAMMs) are a flexible form of regression model well-matched to the complexities of the archaeological record, including non-normal distributions such as counts or proportions, non-linear functional relationships, and non-independent observations with correlated errors.
+Generalized additive models (GAMs) and their variant Generalized additive *mixed* models (GAMMs) are a flexible family of regression models well-matched to the complexity of the archaeological record.
 
 \vspace{1cm}
 
 **Let's break it down:**
 
-* *Generalized* -- Model data different distributions
-* *Additive* -- Additive function of smooth functions. 
-* *Mixed* -- Random effects to model network autocorrelation
+* *Generalized* -- Model non-normal distributions such as counts or proportions
+* *Additive* -- Combine linear and non-linear relationships
+* *Mixed* -- Control for network, spatial, and temporal autocorrelation
 
 # What can I do with them?
 
-Plenty! In archaeology, they're particuarly useful for fitting so-called ``gravity'' style spatial interaction models. Most archaeological network data proxy for some kind of *flow* -- goods, people, information -- between spatially-structured populations.:
+In archaeology, they're particuarly useful for fitting so-called ``maximum-entropy'' style spatial interaction models. Most archaeological network represent a *flow* of something -- goods, information, or people -- between spatially-structured populations. Spatial interaction models separate influences from the origin site, the destination site, and the space between them:
 
 \vspace{1cm}
 
-\begin{center}
-  $flow = f\left(origin\right) \times f\left(destination\right) \times f\left(distance\right)$
-\begin{center}
-
-```{r, fig.width = 6, fig.height = 4}
+$$flow = f\left(origin\right) \times f\left(destination\right) \times f\left(distance\right)$$
+```{r, fig.width = 6, fig.height = 4, out.width = "40%"}
 tbl_graph(nodes = tibble(size = c(50, 100, 150), x = 1:3, y = c(1,2,1)), 
           edges = expand.grid(from = 1:3, to = 1:3)) %E>%
   mutate(distance = sqrt((.N()$x[from] - .N()$x[to])^2 + (.N()$y[from] - .N()$y[to])^2),
@@ -115,19 +112,30 @@ tbl_graph(nodes = tibble(size = c(50, 100, 150), x = 1:3, y = c(1,2,1)),
   theme_void() 
 ```
 
-The tricky part comes when we actually have to define all the $f\left(\right)$s. This is where splines come in handy.
+The difficult part comes when we actually have to define all the $f\left(\right)$s. Economic geographers typically estimate spatial interaction models with generalized *linear* models, so must choose the functional forms ahead of time. This is where splines come in handy.
+
+\vspace{1cm}
 
 # How do they work?
 
-Penalized plines are the secret sauce that make GAMs so useful. They allow us estimate smooth functional forms directly from the data, rather than trying to fit the data to some prespecified function. They minimize overfitting by penalizing the ``wiggliness'' of the function.
+Splines are what make GAMs so useful. Real-world splines are flexible strips of metal or wood used to draw curves. Mathematical splines are complex curves made of many smaller, simpler curves. GAMs limit overfitting by penalizing the "wiggliness" of the function, just as you'd use a more rigid piece of wood to draw a smoother curve.  
 
 \begin{center}
-\includegraphics{Figures/spline1.png}
+\includegraphics[width=.2\columnwidth]{Figures/spline.png}
 \end{center}
 
-# Give me some examples!
+\vspace{1cm}
 
-## Chumash Marriages
+# Case Studies
+
+## Chumash marriage networks
+
+```{r}
+library(raster)
+library(rayshader)
+
+```
+
 
 ```{r}
 chumash_villages <- read_csv('data/chumash_villages.csv') %>%
@@ -151,10 +159,43 @@ chumash_net <- read.csv('data/chumash_marriages.csv', row.names = 1) %>%
          population_add = .N()$baptisms[from] + .N()$baptisms[to],
          eco_same = as.factor(.N()$coastal[from] == .N()$coastal[to]))
 
-ca_boundary <- maps::map('county', region = 'California',
-                    fill = TRUE, plot = FALSE) %>%
+
+bbox <- st_as_sfc(st_bbox(chumash_villages))
+
+srtm <- raster::getData('SRTM', lon = st_coordinates(st_centroid(bbox))[1], 
+                        lat = st_coordinates(st_centroid(bbox))[2]) %>%
+  crop(as(bbox, 'Spatial'))
+
+raster::getData('GADM', country = 'USA', level = 1) %>%
+  crop(as(bbox, 'Spatial')) %>% plot
+
+
+
+
+plot(srtm)
+elev <- srtm %>%
+  disaggregate(fact = 4, method = 'bilinear') %>%
+  as.matrix() %>%
+  t
+
+
+
+  
+sphere_shade(elev, texture = 'desert') %>%
+  plot_3d(heightmap = elev, zscale = 50, water = TRUE, watercolor = 'desert') %>%
+  render_snapshot()
+  
+render_snapshot()
+rgl::rgl.clear()
+
+sphere_shade(elev, texture = 'imhof4') %>%
+  plot_map
+
+ca_boundary <- raster::getData('GADM', country = 'USA', level = 1) %>%
   st_as_sf
 ```
+
+First we'll look at a dataset of XX840XX marriages between 41 Chumash villages near Santa Barbara, California, as recorded by Spanish missionaries. Populations are estimated from baptism records.
 
 ```{r}
 chumash_net %E>%
@@ -169,9 +210,11 @@ ggraph() +
   scale_size_area(name = 'Population (est)') +
   #coord_quickmap()+
   theme(legend.position = 'bottom') +
-  #geom_sf(data = ca_boundary, fill = NA) +
+  geom_sf(data = ca_boundary, fill = NA) +
   coord_sf(datum = NA, xlim = c(-120.60246, -119.48277), ylim = c(34.38628, 34.74438 ))
 ```
+
+We can model these data by regressing the count of marriages between each village pair on the product of their populations and the distance between them.
 
 ```{r, include = FALSE}
 m1 <- gamm(marriages ~ te(distance, population) + eco_same,
@@ -186,51 +229,12 @@ m1 <- gamm(marriages ~ te(distance, population) + eco_same,
 vis.gam(m1$gam, view = c('distance', 'population'), theta = 45, phi = 15, type = 'response', se = -1, color = 'bw')
 ```
 
-```{r, eval = FALSE}
-tmp1 <- expand.grid(distance = 0:40, population = 100, eco_same = c('TRUE', 'FALSE'))
-predict(m1$gam, tmp1, type = 'response', se.fit = TRUE) %>%
-  bind_cols(tmp1) %>%
-  mutate(fit = fit,
-         lower = fit - 2 * se.fit,
-         upper = fit + 2 * se.fit) %>%
-  ggplot(aes(distance, fit, group = eco_same)) +
-  geom_ribbon(aes(ymin = lower, ymax = upper, fill = eco_same), alpha = .2) +
-  geom_line(aes(y = fit, color = eco_same), size = 1.5) +
-  scale_color_manual(values = c('#253494', '#41b6c4')) +
-  scale_fill_manual(values = c('#253494', '#41b6c4')) +
-  theme_classic() +
-  labs(title = 'Estimated distance decay functions', subtitle = 'Within and across ecological boundaries',
-       x = 'Distance (km)', y = 'Number of marriages')
-```
+The result is just what we'd expect if we had used a GLM without splines: power functions with a negative exponent for distance and a superlinear exponent for population.
 
-```{r, eval = FALSE}
-#tmp2 <- match(predict(m1$gam), predict(m1$lme))
+\vspace{1cm}
 
-#predict(m1$gam) == predict(m1$lme)
+## Ceramic distribution in Roman Britain
 
-chumash_net %E>%
-  mutate(pred = predict(m1$lme),
-         pred2 = predict(m1$gam, type = 'response'),
-         res = marriages - exp(pred)) %>%
-  #mutate(res = residuals(m1$gam, type = 'response')) %>%
-  arrange(abs(res)) %>%
-  filter(marriages != 0) %>%
-ggraph() +
-  geom_edge_link(aes(colour = res, alpha= res, width = res), lineend = 'round') +
-  geom_node_point(aes(size = baptisms, color = coastal)) +
-  scale_edge_alpha(range = c(.5, 1)) +
-  scale_edge_color_distiller(palette = 'RdBu', limits = c(-8, 8)) + 
-  theme_void() +
-  scale_size_area() +
-  coord_quickmap() +
-  geom_sf(data = ca_boundary, fill = NA) +
-  coord_sf(datum = NA, xlim = c(-120.60246, -119.48277), ylim = c(34.38628, 34.74438 ))
-```
-
-
-## Oxford Pots
-
-A dataset of Late Romano-British pottery. We have data for the percentage of the ceramic assemblage at 30 sites that were produced at Oxford or New Forest, and want to understand something about how these pots were moved over space.
 ```{r}
 data("OxfordPots")
 pots <- OxfordPots %>%
@@ -240,9 +244,7 @@ pots <- OxfordPots %>%
   spread(measure, value) %>%
   rename(percent = Pct, distance = Dst) %>%
   mutate(from = str_replace(from, 'NewForest', 'New Forest'))
-```
 
-```{r}
 pots_sites <- readRDS('data/oxfordpots_locations.RDS') %>%
   left_join(select(pots, to, WalledArea) %>% group_by(to) %>% 
               summarise(area = mean(WalledArea)), by = c('site' = 'to'))
@@ -264,7 +266,9 @@ pots_dat <- pots_net %E>%
          to = as.factor(to))
 ```
 
-```{r}
+Next is a dataset of Late Romano-British pottery. We have data for the percentage of the ceramic assemblage at 30 sites that were produced at Oxford or New Forest, and want to understand something about how these pots were moved over space.
+
+```{r, fig.cap = "Percentages of late Romano-British pottery produced in Oxford and New Forest."}
 pots_net %E>%
   arrange(percent) %>%
 ggraph() +
@@ -272,7 +276,6 @@ ggraph() +
   geom_edge_link(aes(colour = percent), edge_width = 2, lineend = 'round') +
   geom_sf(data = filter(pots_sites, site %in% c('Oxford', 'New Forest')), size = 4) +
   scale_edge_color_distiller(palette = 'YlGnBu', guide = 'legend', name = 'Percentage of pottery \nfrom origin site') +
-  labs(title = 'Ceramic distribution in Roman Britain', subtitle = 'Percentages of late Romano-British pottery produced in Oxford and New Forest') +
   coord_sf(datum = NA, xlim = c(-6, 2), ylim = c(50, 53.8)) +
   theme_void()
 ```
@@ -286,8 +289,9 @@ m1 <- gam(similarity ~ s(distance, by = water) + water + from,
           data = pots_dat)
 ```
 
-We can look at the spline functions fit by the GAM. These suggest that overland travel is subject to logarithmic distance decay, but water transport seems to have no such constraints. 
-```{r}
+We can look at the spline functions fit by the GAM. These suggest that overland travel is subject to logarithmic distance decay, but water transport seems to have no such constraints.
+
+```{r, out.width = "30%", fig.cap = "Estimated distance decay functions, with and without water transport."}
 tmp1 <- expand.grid(distance = 0:140, water = c(TRUE, FALSE), from = 2)
 predict(m1, tmp1, type = 'response', se.fit = TRUE) %>%
   bind_cols(tmp1) %>%
@@ -300,13 +304,12 @@ predict(m1, tmp1, type = 'response', se.fit = TRUE) %>%
   scale_color_manual(values = c('#253494', '#41b6c4')) +
   scale_fill_manual(values = c('#253494', '#41b6c4')) +
   theme_classic() +
-  labs(title = 'Estimated distance decay functions', subtitle = 'With and without water transport',
-       x = 'Distance (km)', y = 'Percentage of pottery from origin site')
+  labs( x = 'Distance (km)', y = 'Percentage of pottery from origin site')
 ```
 
+Finally, by examining the residuals of the basic spatial interaction model, we can focus on the links that are unusually stronger or weaker than expected for further study.
 
-```{r, eval=FALSE}
-#By examining the residuals of the distance only spatial interaction model, we can isolate network links that are unusually strong or weak than we would expect if distance alone were influencing interaction.
+```{r, out.width = "30%", eval= TRUE, fig.cap="Residuals from a distance-only interaction model. Red ties are stronger then expected, blue ties weaker."}
 pots_net %E>%
   mutate(res = residuals(m1, type = 'response') * 100) %>%
   arrange(abs(res)) %>%
@@ -315,22 +318,18 @@ ggraph() +
   geom_edge_link(aes(colour = res), edge_width = 2, lineend = 'round') +
   geom_sf(data = filter(pots_sites, site %in% c('Oxford', 'New Forest')), size = 4) +
   scale_edge_color_distiller(palette = 'RdBu', limits = c(-8, 8), labels = paste0(seq(-8, 8, by = 4), '%'), guide = 'legend', name = '') +
-  labs(title = 'Residuals from a distance-only interaction model', subtitle = 'Red ties are stronger then expected, blue ties weaker') +
   coord_sf(datum = NA, xlim = c(-6, 2), ylim = c(50, 53.8)) +
   theme_void()
 ```
 
 
-# I want to analyze my own data!
+# What else?
 
-Scan this QR code to access a Github repository with the code used to generate this poster, as well as a mored detailed guide to analyzing network data with GAMMs.
+GAMs can fit many different kinds of functions, with spatial, temporal, and network autocorrelation. Many response types such as counts, percents, binary, categories, ordered categories, hazard models. Use the package `mgcv` in `R`. Bayesian implementations in `brms`. Scan this QR code, or go to https://github.com/nick-gauthier/gam-networks to find the code and data used to make this poster, and more detailed worked examples in R.
 
 \begin{center}
-\includegraphics[width=.2\columnwidth]{Figures/qr}
+\includegraphics[width=.1\columnwidth]{Figures/qr}
 \end{center}
-
-
-
 
 
 \small\printbibliography
