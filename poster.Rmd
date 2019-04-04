@@ -7,15 +7,15 @@ font_size: "30pt" #please see github.com/brentthorne/posterdown for compatible o
 
 #---TITLE BOX OPTIONS---#
 #ESSENTIALS
-title: '\fontfamily{phv}\selectfont Generalized additive mixed models for archaeological network data'
+title: '\fontfamily{phv}\selectfont Generalized additive mixed models for spatial networks'
 author: "Nicolas Gauthier"
 affiliation: "School of Human Evolution and Social Change, Arizona State University"
 #STYLE & FORMATTING
-titlebox_bgcol: "253494"  #Colour of the Title Box background
-titlebox_bordercol: "41b6c4" #Colour of the title Box border.
+titlebox_bgcol: "433E85"  #Colour of the Title Box background
+titlebox_bordercol: "433E85" #Colour of the title Box border.
 titlebox_shape: "all"
 titlebox_borderwidth: "1cm"
-title_textcol: "ffffff" #colour of title text
+title_textcol: "FFFFFF" #colour of title text
 author_textcol: "ffffff" # Colour of author text
 affiliation_textcol: "ffffff" # Colour of affiliation text
 title_textsize: "Huge"         # Poster title fontsize
@@ -41,8 +41,8 @@ columnline_col: "008080" #colour
 columnline_width: "0pt" #width of line between each column
 #SECTION TITLE STYLING
 sectitle_textcol: "ffffff" # Colour of the poster section titles
-sectitle_bgcol: "41b6c4" # Colour of the section title box
-sectitle_bordercol: "41b6c4" # Colour of the border around the section title box.
+sectitle_bgcol: "433E85" # Colour of the section title box
+sectitle_bordercol: "433E85" # Colour of the border around the section title box.
 sectitle_borderwidth: "2mm" # Thicknes of the section title box border
 sectitle_boxshape: "uphill" # Changes the shape of the section title box.
 
@@ -72,16 +72,18 @@ library(readxl)
 library(mgcv)
 library(ggmap)
 library(sf)
-# devtools::install_github('nspope/corMLPE')
+#devtools::install_github('nspope/corMLPE')
 library(corMLPE)
 library(tidygraph)
+
+# need dev version of ggraph devtools::install_github('thomasp85/ggraph')
 library(ggraph)
 library(archdata)
 ```
 
 # What are GAMMs?
 
-Generalized additive models (GAMs) and their variant Generalized additive *mixed* models (GAMMs) are a flexible family of regression models well-matched to the complexity of the archaeological record.
+Generalized additive models (GAMs) and their variants Generalized additive *mixed* models (GAMMs) are a flexible family of regression models that capture the complexity of the archaeological record.
 
 \vspace{1cm}
 
@@ -93,12 +95,15 @@ Generalized additive models (GAMs) and their variant Generalized additive *mixed
 
 # What can I do with them?
 
-In archaeology, they're particuarly useful for fitting so-called ``maximum-entropy'' style spatial interaction models. Most archaeological network represent a *flow* of something -- goods, information, or people -- between spatially-structured populations. Spatial interaction models separate influences from the origin site, the destination site, and the space between them:
+In archaeology, they're particuarly useful for fitting so-called ``maximum-entropy'' spatial interaction models. These models estimate the *flow* of goods, information, or people between spatially-structured populations as a function of the origin site, destination site, and the space between them:
 
 \vspace{1cm}
 
+\begin{center}
+  \includegraphics[width=.4\columnwidth]{Figures/network_diagram.png}
+\end{center}
 $$flow = f\left(origin\right) \times f\left(destination\right) \times f\left(distance\right)$$
-```{r, fig.width = 6, fig.height = 4, out.width = "40%"}
+```{r, eval = FALSE, fig.width = 6, fig.height = 4, out.width = "40%"}
 tbl_graph(nodes = tibble(size = c(50, 100, 150), x = 1:3, y = c(1,2,1)), 
           edges = expand.grid(from = 1:3, to = 1:3)) %E>%
   mutate(distance = sqrt((.N()$x[from] - .N()$x[to])^2 + (.N()$y[from] - .N()$y[to])^2),
@@ -112,30 +117,67 @@ tbl_graph(nodes = tibble(size = c(50, 100, 150), x = 1:3, y = c(1,2,1)),
   theme_void() 
 ```
 
-The difficult part comes when we actually have to define all the $f\left(\right)$s. Economic geographers typically estimate spatial interaction models with generalized *linear* models, so must choose the functional forms ahead of time. This is where splines come in handy.
+The difficult part comes when we have to define the $f\left(\right)$s. Economic geographers often use a generalized *linear* model (GLM), which requires them to definte the $f\left(\right)$ ahead of time. In a GAM, the $f\left(\right)$s are estimated directly from the data using splines.
 
 \vspace{1cm}
 
 # How do they work?
-
-Splines are what make GAMs so useful. Real-world splines are flexible strips of metal or wood used to draw curves. Mathematical splines are complex curves made of many smaller, simpler curves. GAMs limit overfitting by penalizing the "wiggliness" of the function, just as you'd use a more rigid piece of wood to draw a smoother curve.  
+Real-world splines are flexible strips of metal or wood used to draw curves. Mathematical splines are complex curves made of many smaller, simpler curves. *Penalized* regression splines can estimate $f\left(\right)$ from the data, limiting overfitting by penalizing the "wiggliness" of the function.
 
 \begin{center}
-\includegraphics[width=.2\columnwidth]{Figures/spline.png}
+\includegraphics[width=.3\columnwidth]{Figures/spline.png}
 \end{center}
 
 \vspace{1cm}
 
 # Case Studies
-
-## Chumash marriage networks
-
+\\
 ```{r}
-library(raster)
-library(rayshader)
+data("OxfordPots")
+pots <- OxfordPots %>%
+  rename(to = Place) %>%
+  gather(key, value, OxfordPct:NewForestDst) %>%
+  separate(key, c('from', 'measure'), sep = -3) %>%
+  spread(measure, value) %>%
+  rename(percent = Pct, distance = Dst) %>%
+  mutate(from = str_replace(from, 'NewForest', 'New Forest'))
 
+pots_sites <- readRDS('data/oxfordpots_locations.RDS') %>%
+  left_join(dplyr::select(pots, to, WalledArea) %>% group_by(to) %>% 
+              summarise(area = mean(WalledArea)), by = c('site' = 'to'))
+
+pots_net <- tbl_graph(nodes = pots_sites, edges = pots, directed = TRUE) %E>%
+  filter(!is.na(percent)) %>%
+  mutate(similarity = percent / 100)
+
+uk_boundary <- maps::map('world', region = 'UK',
+                    fill = TRUE, plot = FALSE) %>%
+  st_as_sf
+
+pots_dat <- pots_net %E>%
+  mutate(water = as.factor(WaterTrans == 1),
+         x = .N()$x[to],
+         y = .N()$y[to]) %>% 
+  as_tibble %>%
+  mutate(from = as.factor(from),
+         to = as.factor(to))
 ```
 
+```{r, fig.cap = "Percentages of late Romano-British pottery produced in Oxford and New Forest."}
+pots_net %E>%
+  arrange(percent) %N>%
+ggraph(., layout = 'manual', x = as_tibble(.)$x, y = as_tibble(.)$y) +
+  geom_sf(data = uk_boundary, fill = NA) +
+  geom_edge_link(aes(colour = percent), edge_width = 2, lineend = 'round') +
+  geom_sf(data = filter(pots_sites, site %in% c('Oxford', 'New Forest')), size = 4) +
+  scale_edge_color_viridis(guide = 'legend', name = 'Percentage of pottery \nfrom origin site') +
+  coord_sf(datum = NA, xlim = c(-6, 2), ylim = c(50, 53.8)) +
+  theme_void()
+```
+
+## Ceramic distribution in Roman Britain
+
+First is a dataset of Late Romano-British pottery. We have data for the percentage of the ceramic assemblage at 30 sites that were produced at Oxford or New Forest, and want to understand something about how these pots were moved over space.
 
 ```{r}
 chumash_villages <- read_csv('data/chumash_villages.csv') %>%
@@ -159,59 +201,85 @@ chumash_net <- read.csv('data/chumash_marriages.csv', row.names = 1) %>%
          population_add = .N()$baptisms[from] + .N()$baptisms[to],
          eco_same = as.factor(.N()$coastal[from] == .N()$coastal[to]))
 
-
-bbox <- st_as_sfc(st_bbox(chumash_villages))
-
-srtm <- raster::getData('SRTM', lon = st_coordinates(st_centroid(bbox))[1], 
-                        lat = st_coordinates(st_centroid(bbox))[2]) %>%
-  crop(as(bbox, 'Spatial'))
-
-raster::getData('GADM', country = 'USA', level = 1) %>%
-  crop(as(bbox, 'Spatial')) %>% plot
-
-
-
-
-plot(srtm)
-elev <- srtm %>%
-  disaggregate(fact = 4, method = 'bilinear') %>%
-  as.matrix() %>%
-  t
-
-
-
-  
-sphere_shade(elev, texture = 'desert') %>%
-  plot_3d(heightmap = elev, zscale = 50, water = TRUE, watercolor = 'desert') %>%
-  render_snapshot()
-  
-render_snapshot()
-rgl::rgl.clear()
-
-sphere_shade(elev, texture = 'imhof4') %>%
-  plot_map
-
-ca_boundary <- raster::getData('GADM', country = 'USA', level = 1) %>%
+ca_boundary <- maps::map('county', region = 'California',
+                    fill = TRUE, plot = FALSE) %>%
   st_as_sf
 ```
-
-First we'll look at a dataset of XX840XX marriages between 41 Chumash villages near Santa Barbara, California, as recorded by Spanish missionaries. Populations are estimated from baptism records.
 
 ```{r}
 chumash_net %E>%
   arrange(marriages) %>%
-  filter(marriages > 1) %>%
+  #filter(marriages > 1) %>%
 ggraph() +
-  geom_edge_link(aes(colour = marriages, edge_width = marriages), lineend = 'round') +
+  geom_edge_link(aes(colour = marriages, alpha = marriages, edge_width = marriages), lineend = 'round') +
   geom_node_point(aes(size = baptisms)) +
-  scale_edge_alpha(range = c(.6, 1)) +
-  scale_edge_color_distiller(palette = 'YlGnBu', guide = 'legend') + 
+  #scale_edge_color_distiller(palette = 'YlGnBu', guide = 'legend') + 
+  scale_edge_color_viridis() +
   theme_void() +
   scale_size_area(name = 'Population (est)') +
   #coord_quickmap()+
   theme(legend.position = 'bottom') +
   geom_sf(data = ca_boundary, fill = NA) +
-  coord_sf(datum = NA, xlim = c(-120.60246, -119.48277), ylim = c(34.38628, 34.74438 ))
+  coord_sf(datum = NA, xlim = c(-120.60246, -119.48277), ylim = c(34.38628, 34.74438))
+```
+
+## Chumash marriage networks
+
+Next we'll look at a dataset of XX840XX marriages between 41 Chumash villages near Santa Barbara, California, as recorded by Spanish missionaries. Populations are estimated from baptism records.
+
+
+\vspace{1cm}
+\vspace{1cm}
+\vspace{1cm}
+\vspace{1cm}
+\vspace{1cm}
+\vspace{1cm}
+
+# Results
+
+```{r}
+m1 <- gam(similarity ~ s(distance, by = water) + water + from,
+          method = 'REML', # algorithm to estimate the GAM
+          select = TRUE, # allow some variables to be selected out
+          family = betar(), # beta distribution between 0 and 1
+          data = pots_dat)
+```
+
+We can look at the spline functions fit by the GAM. These suggest that overland travel is subject to logarithmic distance decay, but water transport seems to have no such constraints.
+
+```{r, out.width = "30%", out.width=".49\\columnwidth", fig.align='center', fig.show='hold', fig.cap = "Estimated distance decay functions, with and without water transport."}
+tmp1 <- expand.grid(distance = 0:140, water = c(TRUE, FALSE), from = 2)
+predict(m1, tmp1, type = 'response', se.fit = TRUE) %>%
+  bind_cols(tmp1) %>%
+  mutate(fit = fit * 100,
+         lower = fit - 2 * se.fit * 100,
+         upper = fit + 2 * se.fit * 100) %>%
+  ggplot(aes(distance, fit, group = water)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper, fill = water), alpha = .2) +
+  geom_line(aes(y = fit, color = water), size = 1.2) +
+  #scale_color_manual(values = c('#253494', '#41b6c4')) +
+  #scale_fill_manual(values = c('#253494', '#41b6c4')) +
+  scale_color_viridis_d() +
+  scale_fill_viridis_d() +
+  theme_classic() +
+  labs( x = 'Distance (km)', y = 'Percentage of pottery from origin site')
+
+pots_net %E>%
+  mutate(res = residuals(m1, type = 'response') * 100) %>%
+  arrange(abs(res)) %N>%
+ggraph(., layout = 'manual', x = as_tibble(.)$x, y = as_tibble(.)$y) +
+  geom_sf(data = uk_boundary, fill = NA) +
+  geom_edge_link(aes(colour = res), edge_width = 2, lineend = 'round') +
+  geom_sf(data = filter(pots_sites, site %in% c('Oxford', 'New Forest')), size = 4) +
+  scale_edge_color_distiller(palette = 'RdBu', limits = c(-8, 8), labels = paste0(seq(-8, 8, by = 4), '%'), guide = 'legend', name = '') +
+  coord_sf(datum = NA, xlim = c(-6, 2), ylim = c(50, 53.8)) +
+  theme_void()
+```
+
+Finally, by examining the residuals of the basic spatial interaction model, we can focus on the links that are unusually stronger or weaker than expected for further study.
+
+```{r, out.width = "30%", eval= TRUE, fig.cap="Residuals from a distance-only interaction model. Red ties are stronger then expected, blue ties weaker."}
+
 ```
 
 We can model these data by regressing the count of marriages between each village pair on the product of their populations and the distance between them.
@@ -225,110 +293,26 @@ m1 <- gamm(marriages ~ te(distance, population) + eco_same,
       data =  as_tibble(activate(chumash_net, 'edges')))
 ```
 
-```{r, fig.height = 4, fig.width=4}
+```{r, out.width=".49\\columnwidth", fig.align='center', fig.show='hold'}
+expand_grid(population = seq(0, 50000, 100),
+            distance = seq(0, 50, 0.1),
+            eco_same = FALSE) %>%
+  mutate(marriages = predict(m1$gam, ., type = 'response')) %>%
+  ggplot(aes(distance, population, fill = marriages)) +
+  geom_raster() +
+  scale_fill_viridis_c(guide = 'legend') +
+  theme_classic() +
+  coord_fixed(ratio = .001)
+
 vis.gam(m1$gam, view = c('distance', 'population'), theta = 45, phi = 15, type = 'response', se = -1, color = 'bw')
 ```
 
-The result is just what we'd expect if we had used a GLM without splines: power functions with a negative exponent for distance and a superlinear exponent for population.
+# What's next?
 
-\vspace{1cm}
-
-## Ceramic distribution in Roman Britain
-
-```{r}
-data("OxfordPots")
-pots <- OxfordPots %>%
-  rename(to = Place) %>%
-  gather(key, value, OxfordPct:NewForestDst) %>%
-  separate(key, c('from', 'measure'), sep = -3) %>%
-  spread(measure, value) %>%
-  rename(percent = Pct, distance = Dst) %>%
-  mutate(from = str_replace(from, 'NewForest', 'New Forest'))
-
-pots_sites <- readRDS('data/oxfordpots_locations.RDS') %>%
-  left_join(select(pots, to, WalledArea) %>% group_by(to) %>% 
-              summarise(area = mean(WalledArea)), by = c('site' = 'to'))
-
-pots_net <- tbl_graph(nodes = pots_sites, edges = pots, directed = TRUE) %E>%
-  filter(!is.na(percent)) %>%
-  mutate(similarity = percent / 100)
-
-uk_boundary <- maps::map('world', region = 'UK',
-                    fill = TRUE, plot = FALSE) %>%
-  st_as_sf
-
-pots_dat <- pots_net %E>%
-  mutate(water = as.factor(WaterTrans == 1),
-         x = .N()$x[to],
-         y = .N()$y[to]) %>% 
-  as_tibble %>%
-  mutate(from = as.factor(from),
-         to = as.factor(to))
-```
-
-Next is a dataset of Late Romano-British pottery. We have data for the percentage of the ceramic assemblage at 30 sites that were produced at Oxford or New Forest, and want to understand something about how these pots were moved over space.
-
-```{r, fig.cap = "Percentages of late Romano-British pottery produced in Oxford and New Forest."}
-pots_net %E>%
-  arrange(percent) %>%
-ggraph() +
-  geom_sf(data = uk_boundary, fill = NA) +
-  geom_edge_link(aes(colour = percent), edge_width = 2, lineend = 'round') +
-  geom_sf(data = filter(pots_sites, site %in% c('Oxford', 'New Forest')), size = 4) +
-  scale_edge_color_distiller(palette = 'YlGnBu', guide = 'legend', name = 'Percentage of pottery \nfrom origin site') +
-  coord_sf(datum = NA, xlim = c(-6, 2), ylim = c(50, 53.8)) +
-  theme_void()
-```
-
-
-```{r}
-m1 <- gam(similarity ~ s(distance, by = water) + water + from,
-          method = 'REML', # algorithm to estimate the GAM
-          select = TRUE, # allow some variables to be selected out
-          family = betar(), # beta distribution between 0 and 1
-          data = pots_dat)
-```
-
-We can look at the spline functions fit by the GAM. These suggest that overland travel is subject to logarithmic distance decay, but water transport seems to have no such constraints.
-
-```{r, out.width = "30%", fig.cap = "Estimated distance decay functions, with and without water transport."}
-tmp1 <- expand.grid(distance = 0:140, water = c(TRUE, FALSE), from = 2)
-predict(m1, tmp1, type = 'response', se.fit = TRUE) %>%
-  bind_cols(tmp1) %>%
-  mutate(fit = fit * 100,
-         lower = fit - 2 * se.fit * 100,
-         upper = fit + 2 * se.fit * 100) %>%
-  ggplot(aes(distance, fit, group = water)) +
-  geom_ribbon(aes(ymin = lower, ymax = upper, fill = water), alpha = .2) +
-  geom_line(aes(y = fit, color = water), size = 1.2) +
-  scale_color_manual(values = c('#253494', '#41b6c4')) +
-  scale_fill_manual(values = c('#253494', '#41b6c4')) +
-  theme_classic() +
-  labs( x = 'Distance (km)', y = 'Percentage of pottery from origin site')
-```
-
-Finally, by examining the residuals of the basic spatial interaction model, we can focus on the links that are unusually stronger or weaker than expected for further study.
-
-```{r, out.width = "30%", eval= TRUE, fig.cap="Residuals from a distance-only interaction model. Red ties are stronger then expected, blue ties weaker."}
-pots_net %E>%
-  mutate(res = residuals(m1, type = 'response') * 100) %>%
-  arrange(abs(res)) %>%
-ggraph() +
-  geom_sf(data = uk_boundary, fill = NA) +
-  geom_edge_link(aes(colour = res), edge_width = 2, lineend = 'round') +
-  geom_sf(data = filter(pots_sites, site %in% c('Oxford', 'New Forest')), size = 4) +
-  scale_edge_color_distiller(palette = 'RdBu', limits = c(-8, 8), labels = paste0(seq(-8, 8, by = 4), '%'), guide = 'legend', name = '') +
-  coord_sf(datum = NA, xlim = c(-6, 2), ylim = c(50, 53.8)) +
-  theme_void()
-```
-
-
-# What else?
-
-GAMs can fit many different kinds of functions, with spatial, temporal, and network autocorrelation. Many response types such as counts, percents, binary, categories, ordered categories, hazard models. Use the package `mgcv` in `R`. Bayesian implementations in `brms`. Scan this QR code, or go to https://github.com/nick-gauthier/gam-networks to find the code and data used to make this poster, and more detailed worked examples in R.
+GAMs can fit many different kinds of functions, with spatial, temporal, and network autocorrelation. Many response types such as counts, percents, binary, categories, ordered categories, hazard models. Use the package `mgcv` in `R`. Bayesian implementations in `brms`. Scan this QR code, or go to https://github.com/nick-gauthier/gam-networks to find the R code used to make this poster, along with more detailed worked examples.
 
 \begin{center}
-\includegraphics[width=.1\columnwidth]{Figures/qr}
+\includegraphics[width=5in]{Figures/qr}
 \end{center}
 
 
