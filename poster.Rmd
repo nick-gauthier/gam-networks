@@ -22,17 +22,17 @@ title_textsize: "Huge"         # Poster title fontsize
 author_textsize: "Large"       # Author list font size
 affiliation_textsize: "large"  # Affiliation font size
 #ADDING LOGOS
-logoleft_name: 'Figures/shesc'
+logoleft_name: 'figures/shesc'
 logoleft_width: '5in'
 logoleft_xshift: '1in'
 logoleft_yshift: '1in'
-logoright_name: 'Figures/quantarch3'
+logoright_name: 'figures/quantarch3'
 logoright_width: '5in'
 logoright_xshift: '-1in'
 logoright_yshift: '1in'
 
 #---POSTER BODY OPTIONS---#
-body_bgcol: "ffffff" #colour of the poster main background
+body_bgcol: "FFFFFF" #colour of the poster main background
 body_textsize: "normalsize"    # Size of the main poster body text
 body_textcol: "594F4F"#000000" # Colour of main text in the body of poster
 column_numbers: 3 # Number of columns that the poster has
@@ -47,7 +47,7 @@ sectitle_borderwidth: "2mm" # Thicknes of the section title box border
 sectitle_boxshape: "uphill" # Changes the shape of the section title box.
 
 #---BIBLIOGRAPHY OPTIONS---#
-bibliography: MyLibrary # name of the .bib file used for referencing
+bibliography: references # name of the .bib file used for referencing
 bibliography_spacing: 0.8 # sets the multiplier for line spacing of bibliography spacing (between 0 and 1)
 bibliography_textsize: "small"  # size of the bibliography text size (handy for one too many references!)
 
@@ -55,7 +55,7 @@ bibliography_textsize: "small"  # size of the bibliography text size (handy for 
 cite_col: "CC0000" #colour of ciation elements
 url_col: "008080" #colour of url links
 link_col: "008080" #colour of other links within the poster
-footnote_textcol: "ffffff" # Colour of footnote text if used
+footnote_textcol: "000000" # Colour of footnote text if used
 output: posterdown::posterdown_latex
 ---
 
@@ -66,21 +66,23 @@ knitr::opts_chunk$set(echo = FALSE, results = 'asis', out.width = "80%", warning
 ```{r}
 #devtools::install_github('brentthorne/posterdown')
 #library(posterdown)
+library(raster)
+library(ggspatial)
 library(maps)
 library(tidyverse)
-library(readxl)
 library(mgcv)
-library(ggmap)
 library(sf)
 #devtools::install_github('nspope/corMLPE')
 library(corMLPE)
 library(tidygraph)
 
-# need dev version of ggraph devtools::install_github('thomasp85/ggraph')
+# need dev version of ggraph 
+# devtools::install_github('thomasp85/ggraph')
 library(ggraph)
 library(archdata)
-```
 
+library(patchwork)
+```
 # What are GAMMs?
 
 Generalized additive models (GAMs) and their variants Generalized additive *mixed* models (GAMMs) are a flexible family of regression models that capture the complexity of the archaeological record.
@@ -100,39 +102,33 @@ In archaeology, they're particuarly useful for fitting so-called ``maximum-entro
 \vspace{1cm}
 
 \begin{center}
-  \includegraphics[width=.4\columnwidth]{Figures/network_diagram.png}
+  \includegraphics[width=.4\columnwidth]{figures/network_diagram.png}
 \end{center}
 $$flow = f\left(origin\right) \times f\left(destination\right) \times f\left(distance\right)$$
-```{r, eval = FALSE, fig.width = 6, fig.height = 4, out.width = "40%"}
-tbl_graph(nodes = tibble(size = c(50, 100, 150), x = 1:3, y = c(1,2,1)), 
-          edges = expand.grid(from = 1:3, to = 1:3)) %E>%
-  mutate(distance = sqrt((.N()$x[from] - .N()$x[to])^2 + (.N()$y[from] - .N()$y[to])^2),
-         weight = .N()$size[from]^1.15 * .N()$size[to] * exp(-0.15 * distance)) %>%
-  ggraph() +
-  geom_edge_fan(aes(width = weight, alpha = ..index.., color = weight), show.legend = FALSE) +
-  geom_node_point(aes(size = size), show.legend = FALSE) +
- scale_size(range = c(5,15)) +
- scale_edge_color_distiller(palette = 'YlGnBu') +
-  scale_color_distiller(palette = 'YlGnBu') +
-  theme_void() 
-```
 
-The difficult part comes when we have to define the $f\left(\right)$s. Economic geographers often use a generalized *linear* model (GLM), which requires them to definte the $f\left(\right)$ ahead of time. In a GAM, the $f\left(\right)$s are estimated directly from the data using splines.
+The difficult part comes when we have to define the $f\left(\right)$s. Economic geographers often use a generalized *linear* model (GLM), which requires them to definte $f\left(\right)$ ahead of time. In a GAM, the $f\left(\right)$s are estimated directly from the data using splines.
 
 \vspace{1cm}
 
 # How do they work?
-Real-world splines are flexible strips of metal or wood used to draw curves. Mathematical splines are complex curves made of many smaller, simpler curves. *Penalized* regression splines can estimate $f\left(\right)$ from the data, limiting overfitting by penalizing the "wiggliness" of the function.
+
+\vspace{1cm}
 
 \begin{center}
-\includegraphics[width=.3\columnwidth]{Figures/spline.png}
+\includegraphics[width=.3\columnwidth]{figures/spline.png}
 \end{center}
 
 \vspace{1cm}
 
+Real-world splines are flexible strips of metal or wood used to draw curves. Mathematical splines are complex curves made of many smaller, simpler curves. *Penalized* regression splines can estimate $f\left(\right)$ from the data, limiting overfitting by penalizing the "wiggliness" of the function.
+
+
+
+\vspace{1cm}
+
 # Case Studies
-\\
-```{r}
+
+```{r, include = FALSE}
 data("OxfordPots")
 pots <- OxfordPots %>%
   rename(to = Place) %>%
@@ -163,21 +159,26 @@ pots_dat <- pots_net %E>%
          to = as.factor(to))
 ```
 
-```{r, fig.cap = "Percentages of late Romano-British pottery produced in Oxford and New Forest."}
+```{r, out.width ="100%"}
 pots_net %E>%
   arrange(percent) %N>%
 ggraph(., layout = 'manual', x = as_tibble(.)$x, y = as_tibble(.)$y) +
   geom_sf(data = uk_boundary, fill = NA) +
   geom_edge_link(aes(colour = percent), edge_width = 2, lineend = 'round') +
   geom_sf(data = filter(pots_sites, site %in% c('Oxford', 'New Forest')), size = 4) +
-  scale_edge_color_viridis(guide = 'legend', name = 'Percentage of pottery \nfrom origin site') +
+  scale_edge_color_viridis(guide = 'legend', name = 'Pottery \nfrom origin site',
+                           labels = paste0(seq(5, 20, 5), '%'),
+                           breaks = seq(5, 20, 5)) +
+  annotation_scale(location = 'br', style = 'ticks') +
   coord_sf(datum = NA, xlim = c(-6, 2), ylim = c(50, 53.8)) +
+  ggtitle('Ceramic distribution in Roman Britain', 
+          'Percent late Romano-British pottery produced in Oxford and New Forest \n \n \n') +
   theme_void()
 ```
+The Oxford Pots dataset can be found in the R package `archdata`. \emph{\small{David L. Carlson and Georg Roth (2018). archdata: Example Datasets from Archaeological Research. R package version 1.2.}}
 
-## Ceramic distribution in Roman Britain
+\vspace{4cm}
 
-First is a dataset of Late Romano-British pottery. We have data for the percentage of the ceramic assemblage at 30 sites that were produced at Oxford or New Forest, and want to understand something about how these pots were moved over space.
 
 ```{r}
 chumash_villages <- read_csv('data/chumash_villages.csv') %>%
@@ -197,57 +198,47 @@ chumash_net <- read.csv('data/chumash_marriages.csv', row.names = 1) %>%
   left_join(chumash_villages, by = c('name' = 'village')) %E>%
   mutate(distance = st_distance(.N()$geometry[from], .N()$geometry[to], by_element = TRUE),
          distance = as.numeric(distance) / 1000,
-         population = .N()$baptisms[from] * .N()$baptisms[to],
-         population_add = .N()$baptisms[from] + .N()$baptisms[to],
+         baptisms = .N()$baptisms[from] * .N()$baptisms[to],
          eco_same = as.factor(.N()$coastal[from] == .N()$coastal[to]))
 
-ca_boundary <- maps::map('county', region = 'California',
-                    fill = TRUE, plot = FALSE) %>%
-  st_as_sf
+chumash_dat <-  chumash_net %E>% as_tibble
+
+elev <- raster('data/santa_barbara_dem.tif') %>% 
+  as.data.frame(xy = TRUE, na.rm = TRUE)
+
+chumash_paths <- read_sf('data/chumash_paths.shp')
 ```
 
-```{r}
-chumash_net %E>%
+```{r, out.width ="100%"}
+chumash_paths %>%  
   arrange(marriages) %>%
-  #filter(marriages > 1) %>%
-ggraph() +
-  geom_edge_link(aes(colour = marriages, alpha = marriages, edge_width = marriages), lineend = 'round') +
-  geom_node_point(aes(size = baptisms)) +
-  #scale_edge_color_distiller(palette = 'YlGnBu', guide = 'legend') + 
-  scale_edge_color_viridis() +
+  ggplot +
+  geom_raster(data = elev, aes(x, y, fill = santa_barbara_dem), show.legend = FALSE) +
+  geom_sf(aes(color = marriages), size = 2) +
+  geom_sf(data = chumash_villages, aes(size = baptisms), show.legend = 'point') +
+  scale_size_area(name = 'Baptisms') +
+  scale_color_viridis_c(name = '    Marriages\n ') +
+  annotation_scale(style = 'ticks', pad_x = unit(4.35, 'cm'), pad_y = unit(.5, 'cm')) +
+  scale_fill_viridis_c(option = 'D', alpha = .6) +
   theme_void() +
-  scale_size_area(name = 'Population (est)') +
-  #coord_quickmap()+
-  theme(legend.position = 'bottom') +
-  geom_sf(data = ca_boundary, fill = NA) +
-  coord_sf(datum = NA, xlim = c(-120.60246, -119.48277), ylim = c(34.38628, 34.74438))
+  coord_sf(datum = NA) +
+  ggtitle('Coastal Chumash marriages in southern California', 
+          'Marriages in mission registers, population estimated from baptisms') +
+  theme(legend.position = 'bottom')
 ```
-
-## Chumash marriage networks
-
-Next we'll look at a dataset of XX840XX marriages between 41 Chumash villages near Santa Barbara, California, as recorded by Spanish missionaries. Populations are estimated from baptism records.
-
-
-\vspace{1cm}
-\vspace{1cm}
-\vspace{1cm}
-\vspace{1cm}
-\vspace{1cm}
-\vspace{1cm}
+Chumash marriage data can be found in John Johnson's PhD thesis. \emph{\small{John R. Johnson, “Chumash social organization: An ethnohistorical perspective”. PhD thesis. UC Santa Barbara, 1988.}}
 
 # Results
-
+## Late Romano-British Pottery
 ```{r}
 m1 <- gam(similarity ~ s(distance, by = water) + water + from,
-          method = 'REML', # algorithm to estimate the GAM
-          select = TRUE, # allow some variables to be selected out
           family = betar(), # beta distribution between 0 and 1
+          method = 'REML', # algorithm to estimate the GAM
+          select = TRUE, # allow variables to be selected out
           data = pots_dat)
 ```
 
-We can look at the spline functions fit by the GAM. These suggest that overland travel is subject to logarithmic distance decay, but water transport seems to have no such constraints.
-
-```{r, out.width = "30%", out.width=".49\\columnwidth", fig.align='center', fig.show='hold', fig.cap = "Estimated distance decay functions, with and without water transport."}
+```{r, out.wdith = "55%"}
 tmp1 <- expand.grid(distance = 0:140, water = c(TRUE, FALSE), from = 2)
 predict(m1, tmp1, type = 'response', se.fit = TRUE) %>%
   bind_cols(tmp1) %>%
@@ -257,63 +248,64 @@ predict(m1, tmp1, type = 'response', se.fit = TRUE) %>%
   ggplot(aes(distance, fit, group = water)) +
   geom_ribbon(aes(ymin = lower, ymax = upper, fill = water), alpha = .2) +
   geom_line(aes(y = fit, color = water), size = 1.2) +
-  #scale_color_manual(values = c('#253494', '#41b6c4')) +
-  #scale_fill_manual(values = c('#253494', '#41b6c4')) +
-  scale_color_viridis_d() +
-  scale_fill_viridis_d() +
+  scale_color_manual(values = c('#22A884', '#414487'), name = 'Transport', labels = c('Land', 'Water')) +
+  scale_fill_manual(values = c('#22A884', '#414487'), name = 'Transport', labels = c('Land', 'Water')) +
   theme_classic() +
-  labs( x = 'Distance (km)', y = 'Percentage of pottery from origin site')
+  labs(x = 'Distance (km)', y = 'Pottery from origin site (%)',
+       title = 'Distance decay functions on land and water') 
 
-pots_net %E>%
-  mutate(res = residuals(m1, type = 'response') * 100) %>%
-  arrange(abs(res)) %N>%
-ggraph(., layout = 'manual', x = as_tibble(.)$x, y = as_tibble(.)$y) +
-  geom_sf(data = uk_boundary, fill = NA) +
-  geom_edge_link(aes(colour = res), edge_width = 2, lineend = 'round') +
-  geom_sf(data = filter(pots_sites, site %in% c('Oxford', 'New Forest')), size = 4) +
-  scale_edge_color_distiller(palette = 'RdBu', limits = c(-8, 8), labels = paste0(seq(-8, 8, by = 4), '%'), guide = 'legend', name = '') +
-  coord_sf(datum = NA, xlim = c(-6, 2), ylim = c(50, 53.8)) +
-  theme_void()
+# pots_net %E>%
+#   mutate(res = residuals(m1, type = 'response') * 100) %>%
+#   arrange(abs(res)) %N>%
+# ggraph(., layout = 'manual', x = as_tibble(.)$x, y = as_tibble(.)$y) +
+#   geom_sf(data = uk_boundary, fill = NA) +
+#   geom_edge_link(aes(colour = res), edge_width = 2, lineend = 'round') +
+#   geom_sf(data = filter(pots_sites, site %in% c('Oxford', 'New Forest')), size = 4) +
+#   scale_edge_color_distiller(palette = 'RdBu', limits = c(-8, 8), labels = paste0(seq(-8, 8, by = 4), '%'), guide = 'legend', name = 'Residuals') +
+#   coord_sf(datum = NA, xlim = c(-6, 2), ylim = c(50, 53.8)) + 
+#   labs(caption = 'Red ties stronger then expected, blue ties weaker') +
+#   theme_void() 
 ```
 
-Finally, by examining the residuals of the basic spatial interaction model, we can focus on the links that are unusually stronger or weaker than expected for further study.
+GAMs learn functions directly from data. Here we find that the amount of pottery moved over land decays logarithmically, but pottery moved by water does not.
 
-```{r, out.width = "30%", eval= TRUE, fig.cap="Residuals from a distance-only interaction model. Red ties are stronger then expected, blue ties weaker."}
+## Mission-period Chumash
 
+```{r, include=FALSE}
+m2 <- gamm(marriages ~ te(distance, baptisms) + eco_same,
+           family =  quasipoisson(),
+           correlation = corMLPE(form = ~from + to),
+           method = 'REML',
+           select = TRUE,
+           data = chumash_dat)
 ```
 
-We can model these data by regressing the count of marriages between each village pair on the product of their populations and the distance between them.
-
-```{r, include = FALSE}
-m1 <- gamm(marriages ~ te(distance, population) + eco_same,
-      method = 'REML',
-      select = TRUE,
-      family =  quasipoisson(),#Tweedie(p = 1.2, link = 'log'),
-      correlation = corMLPE(form = ~from + to),
-      data =  as_tibble(activate(chumash_net, 'edges')))
-```
-
-```{r, out.width=".49\\columnwidth", fig.align='center', fig.show='hold'}
-expand_grid(population = seq(0, 50000, 100),
-            distance = seq(0, 50, 0.1),
+```{r}
+p1 <- expand.grid(baptisms = seq(0, 300)^2,
+            distance = seq(0, 30, 0.1),
             eco_same = FALSE) %>%
-  mutate(marriages = predict(m1$gam, ., type = 'response')) %>%
-  ggplot(aes(distance, population, fill = marriages)) +
+  mutate(marriages = predict(m2$gam, ., type = 'response')) %>%
+  ggplot(aes(distance, sqrt(baptisms), fill = marriages)) +
   geom_raster() +
-  scale_fill_viridis_c(guide = 'legend') +
+  scale_fill_viridis_c(guide = 'legend', breaks = c(0,2,4,6,8,10,12), name = 'Marriages') +
+  labs(title = 'Tensor spline of population and distance', x = 'Distance (km)', y = 'Baptisms') +
   theme_classic() +
-  coord_fixed(ratio = .001)
+  coord_fixed(ratio = .1)
 
-vis.gam(m1$gam, view = c('distance', 'population'), theta = 45, phi = 15, type = 'response', se = -1, color = 'bw')
+ggsave('figures/tensor_2d.pdf', plot = p1)
 ```
+
+\begin{center}
+\includegraphics[width=.49\columnwidth]{figures/tensor_2d.pdf}
+\includegraphics[width=.39\columnwidth]{figures/tensor_3d.pdf}
+\end{center}
+
+Here we can use a ``tensor'' spline to model the nonlinear influence of distance and population size on Chumash marriage patterns.
 
 # What's next?
 
-GAMs can fit many different kinds of functions, with spatial, temporal, and network autocorrelation. Many response types such as counts, percents, binary, categories, ordered categories, hazard models. Use the package `mgcv` in `R`. Bayesian implementations in `brms`. Scan this QR code, or go to https://github.com/nick-gauthier/gam-networks to find the R code used to make this poster, along with more detailed worked examples.
+Efficient estimation of GAMs and GAMMs is available in `R` with the package `mgcv`, and `brms` provides a Bayesian implementation. Scan this QR code or go to https://github.com/nick-gauthier/gam-networks for the code and data for this poster along with more detailed worked examples.  
 
 \begin{center}
-\includegraphics[width=5in]{Figures/qr}
+\includegraphics[width=3.3in]{figures/qr}
 \end{center}
-
-
-\small\printbibliography

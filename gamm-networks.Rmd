@@ -429,3 +429,141 @@ ggraph() +
   geom_sf(data = ca_boundary, fill = NA) +
   coord_sf(datum = NA, xlim = c(-120.60246, -119.48277), ylim = c(34.38628, 34.74438 ))
 ```
+
+```{r}
+pdf(file = 'figures/tensor_3d.pdf')
+vis.gam(m2$gam, view = c('distance', 'baptisms'), theta = 45, phi = 15, type = 'response', se = -1, color = 'bw')
+dev.off()
+```
+
+```{r}
+library(raster)
+bbox <- st_as_sfc(st_bbox(chumash_villages))
+
+plot(elev)
+srtm <- raster::getData('SRTM', lon = st_coordinates(bbox)[1], 
+                        lat = st_coordinates(st_centroid(bbox))[2]) %>%
+  crop(as(bbox, 'Spatial')) 
+
+raster::getData('GADM', country = 'USA', level = 1) %>%
+  crop(as(bbox, 'Spatial')) %>% plot
+
+
+
+
+plot(srtm)
+elev <- srtm %>%
+  disaggregate(fact = 2, method = 'bilinear') #%>%
+  #as.matrix() %>%
+  #t
+
+plot(elev)
+
+
+
+  
+sphere_shade(elev, texture = 'desert') %>%
+  plot_3d(heightmap = elev, zscale = 50, water = TRUE, watercolor = 'desert') %>%
+  render_snapshot()
+  
+render_snapshot()
+rgl::rgl.clear()
+
+sphere_shade(elev, texture = 'imhof4') %>%
+  plot_map
+
+```
+
+```{r}
+library(gdistance)
+library(smoothr)
+library(ggspatial)
+
+bbox <- extent(-120.7, -119.4500, 34.35000, 34.80000)
+elev <- raster('~/SRTM_W_250m_TIF/SRTM_W_250m.tif') %>%
+  crop(bbox) %>%
+  disaggregate(fact = 2, method = 'bilinear')
+
+writeRaster(elev, 'data/santa_barbara_dem.tif', overwrite = TRUE)
+elev[is.na(elev)] <- 99999
+altDiff <- function(x){abs(x[2] - x[1])}
+hd <- transition(elev, altDiff, 16, symm = TRUE)
+#Divide the height differences by the horizontal distances between cells, resulting in slopes.
+slope_c <- geoCorrection(hd, type = 'c')
+# Figure out which cells are adjacent to one another, queen's case.
+adj <- adjacent(elev, cells = 1:ncell(elev), directions = 8)
+#Use Tobler's hiking function to calculate walking speed from *cognitive* slope.
+tobler_adjusted <- function(x){
+  4 * exp(-3.5 * 2.15 * x) / 3.6 # 3.6 turns km/h into m/s
+}
+speed_c <- slope_c
+speed_c[adj] <- tobler_adjusted(slope_c[adj])
+#Divide by intercell distance again, resulting in the conductance matrix.
+conductance_c <- geoCorrection(speed_c, type = 'c')
+
+nn <- chumash_net %>%
+  group_by(from) %>% 
+  top_n(-4, distance) %>%
+  ungroup
+
+
+pts <- nn %N>% 
+  as_tibble() %>%
+  dplyr::select(x, y)
+
+path_dat <- nn %E>%
+  as_tibble %>%
+  group_by(from) %>%
+  nest %>%
+  mutate(to = map(data, ~c(.$to) %>% unlist)) %>% # turn the "to" column into list of destinations for each origin
+  dplyr::select(-data) %>%
+  # calculate the shortest paths
+  mutate(paths = map2(from, to, ~shortestPath(conductance_c, 
+                                    as.matrix(pts)[.x,], as.matrix(pts)[.y,], 
+                                    output = 'SpatialLines'), .progress = TRUE))
+
+paths_sf <- path_dat %>% 
+  mutate(paths = map(paths, st_as_sf)) %>% 
+  pull(paths) %>% 
+  do.call(rbind, .) %>%
+  bind_cols((path_dat %>% dplyr::select(-paths) %>% unnest), .) %>%
+  st_sf %>%
+  filter(., st_is_valid(.)) %>%
+  smooth(method = 'ksmooth', smoothness = 10)
+
+mar <- chumash_net %E>% as_tibble %>% dplyr::select(from, to, marriages) %>% filter(marriages > 0)
+test_spat <- left_join(nn, paths_sf) %>% dplyr::select(from, to, marriages, distance, geometry) %>%
+  mutate(marriages = 0)
+
+for(i in 1:nrow(mar)){
+  test_spat <- test_spat %>%
+  morph(to_shortest_path, mar[[i,1]], mar[[i,2]], mode = 'all', weights = distance) %>%
+  mutate(marriages = marriages + mar[[i,3]]) %>%
+  unmorph
+}
+
+elev2 <-  elev %>% as.data.frame(xy = TRUE, na.rm = TRUE) %>% as_tibble %>% mutate(elev = na_if(SRTM_W_250m, 99999)) %>% filter(!is.na(elev))
+
+test_spat %E>%
+  as_tibble %>%
+  st_as_sf %>%
+  st_set_crs(4326) %>% st_write('data/chumash_paths.shp')
+
+test_spat %E>%
+  as_tibble %>%
+  st_as_sf %>%
+  st_set_crs(4326) %>%
+  arrange(marriages) %>%
+  ggplot() +
+  geom_raster(data = elev2, aes(x, y, fill = elev), show.legend = FALSE) +
+  geom_sf(aes(color = marriages), size = 1.2) +
+  geom_sf(data = chumash_villages, aes(size = baptisms), show.legend = 'point') +
+  scale_size_area(name = 'Baptisms') +
+  geom_sf_label(x = -120.2, y = 34.37, label = 'Santa Barbara Channel',  fontface = 'plain') +
+  scale_color_viridis_c(name = 'Marriages') +
+  annotation_scale(pad_x = unit(4.35, 'cm'), pad_y = unit(.9, 'cm')) +
+  scale_fill_viridis_c(option = 'D', alpha = .6) +
+  theme_void() +
+  coord_sf(datum = NA)
+```
+
