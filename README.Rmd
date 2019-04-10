@@ -1,9 +1,12 @@
 ---
-title: "GAMM Networks"
+title: "Generalized additive mixed models for spatial networks"
 author: "Nick Gauthier"
-date: "February 14, 2019"
-output: html_document
-keep_md: TRUE
+output: 
+  html_document: 
+    highlight: zenburn
+    keep_md: yes
+    theme: cosmo
+    toc: yes
 ---
 
 ```{r setup, include=FALSE}
@@ -13,45 +16,53 @@ GAMMs are a flexible form of regression model well-matched to the complexities o
 
 Distance is a fundamental constraint on human social interaction. This basic principle motivates the use of spatial interaction models for estimating flows of people, information, and resources on spatial and social networks. These models have both valid dynamical and statistical interpretations, a key strength well supported by theory and data from geography, economics, ecology, and genetics. To date, archaeologists have primarily relied on the dynamical approach because the idiosyncrasies of archaeological data make the wholesale adoption of statistical approaches from other fields impractical.
 
-# Case Studies
-
-
 # Setup
 
-```{r }
-library(raster)
-library(archdata)
-library(maps)
-library(tidyverse)
-library(readxl)
-library(mgcv)
-library(ggmap)
-library(sf)
+```{r, message = FALSE}
+library(raster) # DEM for map
+library(tidyverse) # data processing and plotting functions
+library(sf) # tidy spatial data and mapping
+library(mgcv) # fit GAMs and GAMMs
+library(archdata) # source for the Oxford Pots data
+library(tidygraph) # tidy network processing
+# devtools::install_github('thomasp85/ggraph') # need dev version of ggraph 
+library(ggraph) # network plots
 # devtools::install_github('nspope/corMLPE')
-library(corMLPE)
-library(tidygraph)
-library(ggraph)
+library(corMLPE) # network correlation structure for undirected networks
+# library(ggmap) # for geocoding, but not used by default (see below)
+library(ggspatial) # scale bar for maps
+library(maps) # country outlines for maps
 ```
 
+# Case Studies
+
 ## Oxford Pots
+First, we'll look at a dataset of Late Romano-British pottery available in the `archdata` package. \emph{\small{David L. Carlson and Georg Roth (2018). archdata: Example Datasets from Archaeological Research. R package version 1.2.}}
 ```{r}
 data("OxfordPots")
+```
 
+### Preprocessing
+Use `tidyr` and `dplyr` to get the data into a tidy format.
+```{r}
 pots <- OxfordPots %>%
+  as_tibble %>%
   rename(to = Place) %>%
   gather(key, value, OxfordPct:NewForestDst) %>%
   separate(key, c('from', 'measure'), sep = -3) %>%
   spread(measure, value) %>%
   rename(percent = Pct, distance = Dst) %>%
-  mutate(from = str_replace(from, 'NewForest', 'New Forest'))
+  mutate(from = str_replace(from, 'NewForest', 'New Forest'),
+         water = as.factor(WaterTrans == 1)) %>%
+  select(to, from, percent, distance, water) %>%
+  filter(!is.na(percent))
+```
 
+```{r, echo = FALSE}
 pots
 ```
 
-```{r}
-ggplot(pots, aes(distance, percent, color = from)) +
-  geom_point(aes(shape = as.factor(WaterTrans)))
-```
+These data don't come with any location information, so we have to do some geocoding using the `ggmap` package. This requires you to get and register your own Google Maps API key, so by default this code chunk is not run and we instead use precomputed values. If you do want to run this chunk, follow the instructions in `?ggmap::register_google` and replace the line `<your-api-key-here>` with your API key.
 
 ```{r, eval = FALSE}
 ggmap::register_google(key = "<your-api-key-here>")
@@ -62,7 +73,9 @@ pots_sites <- pots %>%
   pull(value) %>%
   unique %>% 
   tibble(site = .) %>%
-  mutate(search_term = str_replace_all(site, c('Clausentum' = 'Bitterne', 'Mildenhall' = 'Mildenhall, Wiltshire')),
+  # adjust some names 
+  mutate(search_term = str_replace_all(site, c('Clausentum' = 'Bitterne', 
+                                               'Mildenhall' = 'Mildenhall, Wiltshire')),
          search_term = paste0(search_term, ', UK')) %>%
   mutate_geocode(search_term) %>%
   select(-search_term) %>%
@@ -72,6 +85,61 @@ pots_sites <- pots %>%
 
 saveRDS(pots_sites, 'oxfordpots_locations.RDS')
 ```
+
+Join the Oxford Pots data to the geocoded locations.
+```{r}
+pots_sites <- readRDS('data/oxfordpots_locations.RDS') %>%
+  left_join(dplyr::select(pots, to), by = c('site' = 'to'))
+```
+
+Make a network object using ``tidygraph` for plotting, and an edgelist tibble for modeling.
+```{r}
+pots_net <- tbl_graph(nodes = pots_sites, edges = pots, directed = TRUE) %E>%
+  filter(!is.na(percent)) %>%
+  mutate(similarity = percent / 100)
+
+pots_dat <- pots_net %E>%
+  mutate(x = .N()$x[to],
+         y = .N()$y[to]) %>% 
+  as_tibble %>%
+  mutate(from = as.factor(from),
+         to = as.factor(to))
+
+pots_net
+```
+
+```{r include = FALSE}
+# UK boundary shapefile for plotting.
+uk_boundary <- maps::map('world', region = 'UK',
+                    fill = TRUE, plot = FALSE) %>%
+  st_as_sf
+
+pots_net %E>%
+  arrange(percent) %N>%
+ggraph(., layout = 'manual', x = as_tibble(.)$x, y = as_tibble(.)$y) +
+  geom_sf(data = uk_boundary, fill = NA) +
+  geom_edge_link(aes(colour = percent), edge_width = 2, lineend = 'round') +
+  geom_sf(data = filter(pots_sites, site %in% c('Oxford', 'New Forest')), size = 4) +
+  scale_edge_color_viridis(guide = 'legend', name = 'Pottery \nfrom origin site',
+                           labels = paste0(seq(5, 20, 5), '%'),
+                           breaks = seq(5, 20, 5)) +
+  annotation_scale(location = 'br', style = 'ticks') +
+  coord_sf(datum = NA, xlim = c(-6, 2), ylim = c(50, 53.8)) +
+  ggtitle('Ceramic distribution in Roman Britain', 
+          'Percent late Romano-British pottery produced in Oxford and New Forest \n \n \n') +
+  theme_void()
+```
+
+```{r}
+knitr::knit_exit()
+```
+
+```{r}
+ggplot(pots, aes(distance, percent, color = from)) +
+  geom_point(aes(shape = as.factor(WaterTrans)))
+```
+
+
 
 ```{r}
 pots_sites <- readRDS('oxfordpots_locations.RDS') %>%

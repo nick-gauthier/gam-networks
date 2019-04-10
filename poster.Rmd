@@ -64,28 +64,28 @@ knitr::opts_chunk$set(echo = FALSE, results = 'asis', out.width = "80%", warning
 ```
 
 ```{r}
-#devtools::install_github('brentthorne/posterdown')
-#library(posterdown)
+# posterdown required to knit poster
+# devtools::install_github('brentthorne/posterdown')
+# library(posterdown)
+
 library(raster)
 library(ggspatial)
 library(maps)
 library(tidyverse)
 library(mgcv)
 library(sf)
-#devtools::install_github('nspope/corMLPE')
+# devtools::install_github('nspope/corMLPE')
 library(corMLPE)
 library(tidygraph)
-
 # need dev version of ggraph 
 # devtools::install_github('thomasp85/ggraph')
 library(ggraph)
 library(archdata)
-
 library(patchwork)
 ```
 # What are GAMMs?
 
-Generalized additive models (GAMs) and their variants Generalized additive *mixed* models (GAMMs) are a flexible family of regression models that capture the complexity of the archaeological record.
+Generalized additive models (GAMs) and their variants Generalized additive *mixed* models (GAMMs) are a flexible family of regression model that can capture the complexity of the archaeological record.
 
 \vspace{1cm}
 
@@ -106,7 +106,7 @@ In archaeology, they're particuarly useful for fitting so-called ``maximum-entro
 \end{center}
 $$flow = f\left(origin\right) \times f\left(destination\right) \times f\left(distance\right)$$
 
-The difficult part comes when we have to define the $f\left(\right)$s. Economic geographers often use a generalized *linear* model (GLM), which requires them to definte $f\left(\right)$ ahead of time. In a GAM, the $f\left(\right)$s are estimated directly from the data using splines.
+The difficult part comes when we have to define the $f\left(\right)$s. Economic geographers often use a generalized *linear* model (GLM), which requires them to definte the $f\left(\right)$s ahead of time. In a GAM, the $f\left(\right)$s are estimated directly from the data using splines.
 
 \vspace{1cm}
 
@@ -300,11 +300,11 @@ ggsave('figures/tensor_2d.pdf', plot = p1)
 \includegraphics[width=.39\columnwidth]{figures/tensor_3d.pdf}
 \end{center}
 
-Here we can use a ``tensor'' spline to model the nonlinear influence of distance and population size on Chumash marriage patterns.
+Here we can use a ``tensor'' spline to model the nonlinear interaction between distance and population size that influences Chumash marriage patterns.
 
 # What's next?
 
-Efficient estimation of GAMs and GAMMs is available in `R` with the package `mgcv`, and `brms` provides a Bayesian implementation. Scan this QR code or go to https://github.com/nick-gauthier/gam-networks for the code and data for this poster along with more detailed worked examples.  
+Efficient estimation of GAMs and GAMMs is available in `R` with the package `mgcv`, or with a Bayesian implementation in `brms`. Scan this QR code or go to https://github.com/nick-gauthier/gam-networks for the code and data to generate this poster along with more detailed worked examples.  
 
 \begin{center}
 \includegraphics[width=3.3in]{figures/qr}
