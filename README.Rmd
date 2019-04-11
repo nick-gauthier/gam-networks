@@ -2,10 +2,7 @@
 title: "Generalized additive mixed models for spatial networks"
 author: "Nick Gauthier"
 output: 
-  html_document: 
-    highlight: zenburn
-    keep_md: yes
-    theme: cosmo
+  github_document: 
     toc: yes
 ---
 
@@ -14,9 +11,25 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 GAMMs are a flexible form of regression model well-matched to the complexities of the archaeological record, including non-normal distributions in the form of counts or proportions, non-independent observations with correlated errors, and non-linear functional relationships. Using two case studies -- an ethnographic marriage network and an archaeological assemblage similarity network -- I illustrate how this approach can lead to unbiased parameter estimates and more robust comparisons of competing hypotheses.
 
+# Background
+
 Distance is a fundamental constraint on human social interaction. This basic principle motivates the use of spatial interaction models for estimating flows of people, information, and resources on spatial and social networks. These models have both valid dynamical and statistical interpretations, a key strength well supported by theory and data from geography, economics, ecology, and genetics. To date, archaeologists have primarily relied on the dynamical approach because the idiosyncrasies of archaeological data make the wholesale adoption of statistical approaches from other fields impractical.
 
+A basic spatial interaction model estimates the *flow* of goods, information, or people between spatially-structured populations as a function of the origin site, destination site, and the space between them:
+$$flow = f\left(origin\right) \times f\left(destination\right) \times f\left(distance\right)$$
+![Conceptual diagram of a spatial interaction model.](figures/network_diagram.png)
+
+
+The difficult part comes when we have to define the $f\left(\right)$s. Economic geographers often use a generalized *linear* model (GLM), which requires them to definte the $f\left(\right)$s ahead of time. In a GAM, the $f\left(\right)$s are estimated directly from the data using splines.
+
+Real-world splines are flexible strips of metal or wood used to draw curves. Mathematical splines are complex curves made of many smaller, simpler curves. *Penalized* regression splines can estimate $f\left(\right)$ from the data, limiting overfitting by penalizing the "wiggliness" of the function.
+
+![A real-world spline.](figures/spline.png)
+
+
 # Setup
+
+Before starting analysis install and load the following packages. Where the package is not available on CRAN, use the commented code for installing directly from GitHub.
 
 ```{r, message = FALSE}
 library(raster) # DEM for map
@@ -108,7 +121,8 @@ pots_dat <- pots_net %E>%
 pots_net
 ```
 
-```{r include = FALSE}
+Visualize the result.
+```{r, echo=FALSE}
 # UK boundary shapefile for plotting.
 uk_boundary <- maps::map('world', region = 'UK',
                     fill = TRUE, plot = FALSE) %>%
@@ -130,101 +144,29 @@ ggraph(., layout = 'manual', x = as_tibble(.)$x, y = as_tibble(.)$y) +
   theme_void()
 ```
 
-```{r}
-knitr::knit_exit()
-```
+### Analysis
+
+We're interested in whether the spatial constraints on pottery distribution are different for land or water transport. Fit a GAM in order to estimate the empirical distance decay function from the data, and allow different functions for land versus water transport. We'll use a so-called "origin-constrained" spatial interaction model, which means we add a origin-site specific intercepts to account for network autocorrelation. Because the data are percents, we'll model the errors as beta distributed, so that we don't get any predictions above 100% or below 0%.
+
+In the GAM formula below, `s()` allows us to fit an arbitrary spline of distance, `by = water` allows us to fit different splines for water and land transport. The `from` term fits a different intercept  for each of the two origin sites, controlling for differential export of ceramics from the source cites.
 
 ```{r}
-ggplot(pots, aes(distance, percent, color = from)) +
-  geom_point(aes(shape = as.factor(WaterTrans)))
+pots_model <- gam(similarity ~ s(distance, by = water) + water + from,
+                family = betar(), # beta distribution between 0 and 1
+                method = 'REML', # algorithm to estimate the GAM
+                select = TRUE, # allow variables to be selected out
+                data = pots_dat)
 ```
 
-
-
+Check the model using `summary`. The model has an adjusted R2 of 0.705. Examining the significance of the smooth terms reveals that the spline of distance for land transport is significant, but the spline for water transport is not (which means the spline for water transport is selected out of the model, leaving only the intercept).
 ```{r}
-pots_sites <- readRDS('oxfordpots_locations.RDS') %>%
-  left_join(select(pots, to, WalledArea) %>% group_by(to) %>% 
-              summarise(area = mean(WalledArea)), by = c('site' = 'to'))
+summary(pots_model)
 ```
 
-```{r, eval = FALSE}
-st_distance(pots_sites) %>%
-  `colnames<-`(pots_sites$site) %>%
-  as_tibble %>%
-  mutate(to = pots_sites$site) %>%
-  gather(from, distance, `New Forest`:Wroxeter) %>%
-  filter(to > from) %>%
-  right_join(dat, by = c('from' = 'origin', 'to' = 'destination')) %>%
-  mutate(distance.x = as.numeric(distance.x) / 1000) %>%
-  ggplot(aes(distance.y, distance.x, color = from)) +
-  geom_point() +
-  geom_label(aes(label = to), alpha = .4)
-```
-
-```{r}
-pots_net <- tbl_graph(nodes = pots_sites, edges = pots) %E>%
-  filter(!is.na(percent)) %>%
-  mutate(similarity = percent / 100)
-```
-
-```{r}
-uk_boundary <- maps::map('world', region = 'UK',
-                    fill = TRUE, plot = FALSE) %>%
-  st_as_sf
-```
-
-```{r}
-pots_net %E>%
-  arrange(percent) %>%
-ggraph() +
-  geom_sf(data = uk_boundary, fill = NA) +
-  geom_edge_link(aes(colour = percent), edge_width = 2, lineend = 'round') +
-  geom_sf(data = filter(pots_sites, site %in% c('Oxford', 'New Forest')), size = 4) +
-  scale_edge_color_distiller(palette = 'YlGnBu', guide = 'legend', name = 'Percentage of pottery \nfrom origin site') +
-  labs(title = 'Ceramic distribution in Roman Britain', subtitle = 'Percentages of late Romano-British pottery produced in Oxford and New Forest') +
-  coord_sf(datum = NA, xlim = c(-6, 2), ylim = c(50, 53.7)) +
-  theme_void()
-```
-
-```{r}
-pots_dat <- pots_net %E>%
-  mutate(water = as.factor(WaterTrans == 1),
-         x = .N()$x[to],
-         y = .N()$y[to]) %>% 
-  as_tibble %>%
-  mutate(from = as.factor(from),
-         to = as.factor(to))
-```
-
-Example of model selection.
-```{r}
-pots_models <- c("s(distance) + from",
-            "s(distance) + water + from",
-            "s(distance, by = water) + water + from") %>%
-  paste('similarity ~', .) %>%
-  tibble(formula_chr = .) %>%
-  mutate(formula = map(formula_chr, as.formula), 
-         model = map(formula, ~gam(.x, method = 'ML', family = betar(), data = pots_dat)),
-         aic = map_dbl(model, AIC)) %>%
-  arrange(aic)
-
-pots_models
-```
-
-Refit the best performing model with REML and investigate.
-```{r}
-m1 <- gam(similarity ~ s(distance, by = water) + water + from,
-          method = 'REML',
-          select = TRUE,
-          family = betar(),
-          data = pots_dat)
-
-summary(m1)
-plot(m1, trans = plogis)
-```
-```{r echo = FALSE}
+Let's visualize the resulting spline functions fit by the GAM. It appears that overland travel is subject to logarithmic distance decay, but water transport seems to have no such constraints. This is a case where we've used penalization as form of model selection. The data showed no signal of a distance effect for water transport, so the penalized spline was reduced to a flat line.
+```{r, echo = FALSE}
 tmp1 <- expand.grid(distance = 0:140, water = c(TRUE, FALSE), from = 2)
-predict(m1, tmp1, type = 'response', se.fit = TRUE) %>%
+predict(pots_model, tmp1, type = 'response', se.fit = TRUE) %>%
   bind_cols(tmp1) %>%
   mutate(fit = fit * 100,
          lower = fit - 2 * se.fit * 100,
@@ -232,409 +174,134 @@ predict(m1, tmp1, type = 'response', se.fit = TRUE) %>%
   ggplot(aes(distance, fit, group = water)) +
   geom_ribbon(aes(ymin = lower, ymax = upper, fill = water), alpha = .2) +
   geom_line(aes(y = fit, color = water), size = 1.2) +
-  theme_minimal() +
-  labs(title = 'Estimated distance decay functions', subtitle = 'With and without water transport',
-       x = 'Distance (km)', y = 'Percentage of pottery from origin site')
+  scale_color_manual(values = c('#22A884', '#414487'), name = 'Transport', labels = c('Land', 'Water')) +
+  scale_fill_manual(values = c('#22A884', '#414487'), name = 'Transport', labels = c('Land', 'Water')) +
+  theme_classic() +
+  labs(x = 'Distance (km)', y = 'Pottery from origin site (%)',
+       title = 'Distance decay functions on land and water') 
 ```
 
-```{r}
+Finally, examining the residuals reveals interactions that are unusually stronger of weaker than we'd expect by distance alone.
+```{r, echo = FALSE}
 pots_net %E>%
-  mutate(res = residuals(m1, type = 'response') * 100) %>%
-  arrange(abs(res)) %>%
-ggraph() +
+  mutate(res = residuals(pots_model, type = 'response') * 100) %>%
+  arrange(abs(res)) %N>%
+ggraph(., layout = 'manual', x = as_tibble(.)$x, y = as_tibble(.)$y) +
   geom_sf(data = uk_boundary, fill = NA) +
   geom_edge_link(aes(colour = res), edge_width = 2, lineend = 'round') +
   geom_sf(data = filter(pots_sites, site %in% c('Oxford', 'New Forest')), size = 4) +
-  scale_edge_color_distiller(palette = 'RdBu', limits = c(-8, 8), labels = paste0(seq(-8, 8, by = 4), '%'), guide = 'legend', name = '') +
-  labs(title = 'Residuals from a distance-only interaction model', subtitle = 'Red ties are stronger then expected by distance, blue ties weaker') +
+  scale_edge_color_distiller(palette = 'RdBu', limits = c(-8, 8), labels = paste0(seq(-8, 8, by = 4), '%'), guide = 'legend', name = 'Residuals') +
   coord_sf(datum = NA, xlim = c(-6, 2), ylim = c(50, 53.8)) +
+  labs(title = 'Residuals from an origin-constrained spatial interaction model',
+    caption = 'Red ties stronger then expected, blue ties weaker') +
   theme_void()
 ```
 
-## Data Import and Preprocessing
+## Chumash Marriages
+
+### Preprocessing
+
+Next we'll explore a dataset of intervillage marriages among the Chumash of coastal southern California. Marriage counts, along with the number of baptisms from each village (a population proxy), were recorded by local Spanish missionaries. These data have been digitized from John Johnson's PhD thesis. \emph{\small{John R. Johnson, “Chumash social organization: An ethnohistorical perspective”. PhD thesis. UC Santa Barbara, 1988.}}
+
+Start by importing the village locations and creating an `sf` object. In addition to village names, baptisms, and locations, we have information as to whether the village was situated on the coast or not. Later, we'll use these data to test whether ties between different ecological zones (coastal and inland) are stronger than would expected by distance.
 
 ```{r}
-chumash <- read.csv('chumash_marriage.csv', row.names = 1) %>%
+chumash_villages <- read_csv('data/chumash_villages.csv') %>%
+  st_as_sf(coords = c('x', 'y'), crs = 4326) %>%
+  bind_cols(., as_tibble(st_coordinates(.))) %>%
+  rename(x = X, y = Y) %>%
+  mutate(size = ordered(size, levels = c('hamlet', 'small', 'medium', 'large', 'very large', 'largest'))) 
+```
+```{r, echo = FALSE}
+chumash_villages
+```
+
+Next import the marriage data, join to the village data, and calculate the pairwise euclidean distances between all sites. Also create an edgelist from this network, which we'll use for the actual modeling.
+```{r}
+chumash_net <- read.csv('data/chumash_marriages.csv', row.names = 1) %>%
   as.matrix %>% 
   replace(. == 0, 999) %>% # replace 0 values with 999 temporarily
   as_tbl_graph(directed = FALSE) %E>%
   filter(!edge_is_loop()) %>%
   rename(marriages = weight) %>%
   mutate(marriages = if_else(marriages == 999, 0, marriages))%N>%
-  mutate(centrality = centrality_degree(weights = marriages))
-```
-
-```{r}
-chumash_locs <- read_csv('chumash_villages_locations.csv') %>%
-  st_as_sf(coords = c('X', 'Y'), crs = 4326) %>%
-  bind_cols(., as_tibble(st_coordinates(.))) %>%
-  rename(x = X, y = Y) %>%
-  mutate(size = ordered(size, levels = c('hamlet', 'small', 'medium', 'large', 'very large', 'largest')),
-         population = case_when(size == 'hamlet' ~ 15,
-          size == 'small' ~ 30,
-          size == 'medium' ~ 60,
-          size == 'large' ~ 120,
-          size == 'very large' ~ 200,
-          size == 'largest' ~ 300
-          )) 
-
-chumash_net <- left_join(chumash, chumash_locs, by = c('name' = 'village')) %E>%
+  mutate(centrality = centrality_degree(weights = marriages)) %>%
+  left_join(chumash_villages, by = c('name' = 'village')) %E>%
   mutate(distance = st_distance(.N()$geometry[from], .N()$geometry[to], by_element = TRUE),
-         distance = as.numeric(distance) / 1000) %>%
-  mutate(eco= case_when(.N()$coastal[from] == .N()$coastal[to] & .N()$coastal[from] == TRUE ~ 'Coastal',
-           .N()$coastal[from] == .N()$coastal[to] & .N()$coastal[from] == FALSE ~ 'Inland',
-           .N()$coastal[from] != .N()$coastal[to] ~ 'Cross Boundary'),
-         eco = as.factor(eco),
+         distance = as.numeric(distance) / 1000,
+         baptisms = .N()$baptisms[from] * .N()$baptisms[to],
          eco_same = as.factor(.N()$coastal[from] == .N()$coastal[to]))
 
-ca_boundary <- maps::map('county', region = 'California',
-                    fill = TRUE, plot = FALSE) %>%
-  st_as_sf
-
+chumash_dat <-  chumash_net %E>% as_tibble
 ```
 
-```{r}
-chumash_net %E>%
+```{r, echo = FALSE}
+chumash_net
+```
+
+Map the resulting data, along with a DEM and estimated least cost paths to aid the visualization.
+```{r, echo = FALSE}
+elev <- raster('data/santa_barbara_dem.tif') %>% 
+  as.data.frame(xy = TRUE, na.rm = TRUE)
+
+chumash_paths <- read_sf('data/chumash_paths.shp')
+
+chumash_paths %>%  
   arrange(marriages) %>%
-  filter(marriages > 0) %>%
-ggraph() +
-  geom_edge_link(aes(colour = marriages, alpha= marriages, width = marriages), lineend = 'round') +
-  geom_node_point(aes(size = population, color = coastal)) +
-  scale_edge_alpha(range = c(.5, 1)) +
-  scale_edge_color_distiller(palette = 'YlGnBu') + 
-  theme_void() +
-  scale_size_area() +
-  coord_quickmap() +
-  geom_sf(data = ca_boundary, fill = NA) +
-  coord_sf(datum = NA, xlim = c(-120.60246, -119.48277), ylim = c(34.38628, 34.74438 ))
-
-```
-468 marriages
-```{r}
-
-test <- seq(1.10, 1.30, .01) %>%
-  map(~gamm(marriages ~ s(distance, by = eco) + eco,
-      method = 'REML',
-      select = TRUE,
-      family =  Tweedie(p = .x, link = 'log'), #quasipoisson(link = 'log'),
-      correlation = corMLPE(form = ~from + to),
-      data =   as_tibble(activate(chumash_net, 'edges'))))
-
-test2 <- seq(1.10, 1.30, .01) %>%
-  map(~gamm(marriages ~ s(distance, by = eco_same) + eco_same,
-      method = 'REML',
-      select = TRUE,
-      family =  Tweedie(p = .x, link = 'log'), #quasipoisson(link = 'log'),
-      correlation = corMLPE(form = ~from + to),
-      data =   as_tibble(activate(chumash_net, 'edges'))))
-  
-map(test, ~(.$lme) %>% AIC)
-map(test2, ~(.$lme) %>% AIC) %>% unlist %>% plot
-
-m1 <- gamm(marriages ~ s(distance, by = eco) + eco,
-      method = 'REML',
-      select = TRUE,
-      family =  Tweedie(p = 1.2, link = 'log'), #quasipoisson(link = 'log'),
-      correlation = corMLPE(form = ~from + to),
-      data =   as_tibble(activate(chumash_net, 'edges')))
-m2 <- gamm(marriages ~ s(distance, by = eco) + eco,
-      method = 'REML',
-      select = TRUE,
-      family =  quasipoisson(link = 'log'),
-      correlation = corMLPE(form = ~from + to),
-      data =   as_tibble(activate(chumash_net, 'edges')))
-AIC(m2)
-
-plot(m1$gam, trans = exp)
-gratia::draw(m1$gam)
-summary(m1$gam)
-summary(m1$lme)
-gam.check(m1$gam)
-
-chumash_net %E>%
-  as_tibble %>%
-  ggplot(aes(distance, marriages)) +
-  geom_point() +
-  geom_smooth()
-```
-
-```{r echo = FALSE}
-tmp1 <- expand.grid(distance = 0:60, eco = c('Coastal', 'Cross Boundary', 'Inland')) #= c('TRUE', 'FALSE'))
-predict(m1$gam, tmp1, type = 'response', se.fit = TRUE) %>%
-  bind_cols(tmp1) %>%
-  mutate(fit = fit,
-         lower = fit - 2 * se.fit,
-         upper = fit + 2 * se.fit) %>%
-  ggplot(aes(distance, fit, group = eco)) +
-  geom_ribbon(aes(ymin = lower, ymax = upper, fill = eco), alpha = .2) +
-  geom_line(aes(y = fit, color = eco), size = 1.2) +
-  theme_classic() +
-  labs(title = 'Estimated distance decay functions', subtitle = 'Within and across ecological boundaries',
-       x = 'Distance (km)', y = 'Number of marriages')
-```
-
-```{r}
-tmp2 <- match(predict(m1$gam), predict(m1$lme))
-
-predict(m1$gam) == predict(m1$lme)
-
-chumash_net %E>%
-  mutate(pred = predict(m1$lme),
-         pred2 = predict(m1$gam, type = 'response'),
-         res = marriages - exp(pred)) %>%
-  #mutate(res = residuals(m1$gam, type = 'response')) %>%
-  arrange(abs(res)) %>%
-  filter(marriages != 0) %>%
-ggraph() +
-  geom_edge_link(aes(colour = res, alpha= res, width = res), lineend = 'round') +
-  geom_node_point(aes(size = population, color = coastal)) +
-  scale_edge_alpha(range = c(.5, 1)) +
-  scale_edge_color_distiller(palette = 'RdBu', limits = c(-10, 10)) + 
-  theme_void() +
-  scale_size_area() +
-  coord_quickmap() +
-  geom_sf(data = ca_boundary, fill = NA) +
-  coord_sf(datum = NA, xlim = c(-120.60246, -119.48277), ylim = c(34.38628, 34.74438 ))
-```
-
-We can look at the spline functions fit by the GAM. These suggest that overland travel is subject to logarithmic distance decay, but water transport seems to have no such constraints. This is a case where we've used penalization as form of model selection. The data showed no signal of a distance effect for water transport, so the penalized spline was reduced to a flat line.
-
-```{r}
-m1 <- gamm(qlogis(similarity) ~ s(distance, bs = 'cr') + as.factor(time), 
-           data = dat, 
-           correlation = corMLPE(form = ~from + to|as.factor(time)), 
-           method = 'ML')
-m2 <- gamm(qlogis(similarity) ~ s(distance, bs = 'cr', by = as.factor(time)) + as.factor(time), 
-           data = dat, 
-           correlation = corMLPE(form = ~from + to|as.factor(time)), 
-           method = 'ML')
-m3 <- gamm(qlogis(similarity) ~ s(distance, bs = 'cr', m = 2) + s(distance, bs = 'cs', by = as.factor(time), m = 1) +
-             as.factor(time), 
-           data = dat, 
-           correlation = corMLPE(form = ~from + to|as.factor(time)), 
-           method = 'ML')
-AIC(m1$lme, m2$lme, m3$lme)
-
-plot(m1$gam, trans = plogis)
-plot(m2$gam, trans = plogis)
-plot(m3$gam, trans = plogis)
-
-
-AIC(m3$lme, m4$lme)
-# moderate support for regional effect
-summary(m1$gam)
-summary(m2$gam)
-summary(m3$lme)
-
-
-ggplot(dat, aes(distance)) + geom_histogram()
-ggplot(dat, aes((similarity))) + geom_histogram()
-ggplot(dat, aes(qlogis(similarity), fill = time)) + geom_histogram()
-sum(min(dat$similarity))
-
-gam.check(m3$gam)
-```
-
-```{r}
-mod_time <- dat %>%
-  group_by(time) %>%
-  nest %>%
-  mutate(model = map(data, ~gamm(qlogis(similarity) ~ s(distance, bs = 'cr'), 
-                                 data = ., correlation = corMLPE(form = ~from + to), method = 'ML')),
-         r2 = map_dbl(model, ~summary(.$gam)$r.sq))
-mod_time
-
-mod_time$model %>%
-  map(~.$gam) %>%
-  walk(plot, trans = plogis)
-```
-
-# Next Steps
-Problems:
-symmetrical vs asymmetrical
-lots of zeros
-
-Don't like GAMs? Check out:
-1. GERGMS
-2. AME models
-3. BRMS bayesian implementation?
-The underlying concepts are similar, they only differ in how you estimate them
-
-```{r, eval = FALSE}
-tmp1 <- expand.grid(distance = 0:40, population = 100, eco_same = c('TRUE', 'FALSE'))
-predict(m1$gam, tmp1, type = 'response', se.fit = TRUE) %>%
-  bind_cols(tmp1) %>%
-  mutate(fit = fit,
-         lower = fit - 2 * se.fit,
-         upper = fit + 2 * se.fit) %>%
-  ggplot(aes(distance, fit, group = eco_same)) +
-  geom_ribbon(aes(ymin = lower, ymax = upper, fill = eco_same), alpha = .2) +
-  geom_line(aes(y = fit, color = eco_same), size = 1.5) +
-  scale_color_manual(values = c('#253494', '#41b6c4')) +
-  scale_fill_manual(values = c('#253494', '#41b6c4')) +
-  theme_classic() +
-  labs(x = 'Distance (km)', y = 'Number of marriages')
-title = 'Estimated distance decay functions', subtitle = 'Within and across ecological boundaries',
-```
-
-```{r, eval = FALSE}
-#tmp2 <- match(predict(m1$gam), predict(m1$lme))
-
-#predict(m1$gam) == predict(m1$lme)
-
-chumash_net %E>%
-  mutate(pred = predict(m1$lme),
-         pred2 = predict(m1$gam, type = 'response'),
-         res = marriages - exp(pred)) %>%
-  #mutate(res = residuals(m1$gam, type = 'response')) %>%
-  arrange(abs(res)) %>%
-  filter(marriages != 0) %>%
-ggraph() +
-  geom_edge_link(aes(colour = res, alpha= res, width = res), lineend = 'round') +
-  geom_node_point(aes(size = baptisms, color = coastal)) +
-  scale_edge_alpha(range = c(.5, 1)) +
-  scale_edge_color_distiller(palette = 'RdBu', limits = c(-8, 8)) + 
-  theme_void() +
-  scale_size_area() +
-  coord_quickmap() +
-  geom_sf(data = ca_boundary, fill = NA) +
-  coord_sf(datum = NA, xlim = c(-120.60246, -119.48277), ylim = c(34.38628, 34.74438 ))
-```
-
-```{r}
-pdf(file = 'figures/tensor_3d.pdf')
-vis.gam(m2$gam, view = c('distance', 'baptisms'), theta = 45, phi = 15, type = 'response', se = -1, color = 'bw')
-dev.off()
-```
-
-```{r}
-library(raster)
-bbox <- st_as_sfc(st_bbox(chumash_villages))
-
-plot(elev)
-srtm <- raster::getData('SRTM', lon = st_coordinates(bbox)[1], 
-                        lat = st_coordinates(st_centroid(bbox))[2]) %>%
-  crop(as(bbox, 'Spatial')) 
-
-raster::getData('GADM', country = 'USA', level = 1) %>%
-  crop(as(bbox, 'Spatial')) %>% plot
-
-
-
-
-plot(srtm)
-elev <- srtm %>%
-  disaggregate(fact = 2, method = 'bilinear') #%>%
-  #as.matrix() %>%
-  #t
-
-plot(elev)
-
-
-
-  
-sphere_shade(elev, texture = 'desert') %>%
-  plot_3d(heightmap = elev, zscale = 50, water = TRUE, watercolor = 'desert') %>%
-  render_snapshot()
-  
-render_snapshot()
-rgl::rgl.clear()
-
-sphere_shade(elev, texture = 'imhof4') %>%
-  plot_map
-
-```
-
-```{r}
-library(gdistance)
-library(smoothr)
-library(ggspatial)
-
-bbox <- extent(-120.7, -119.4500, 34.35000, 34.80000)
-elev <- raster('~/SRTM_W_250m_TIF/SRTM_W_250m.tif') %>%
-  crop(bbox) %>%
-  disaggregate(fact = 2, method = 'bilinear')
-
-writeRaster(elev, 'data/santa_barbara_dem.tif', overwrite = TRUE)
-elev[is.na(elev)] <- 99999
-altDiff <- function(x){abs(x[2] - x[1])}
-hd <- transition(elev, altDiff, 16, symm = TRUE)
-#Divide the height differences by the horizontal distances between cells, resulting in slopes.
-slope_c <- geoCorrection(hd, type = 'c')
-# Figure out which cells are adjacent to one another, queen's case.
-adj <- adjacent(elev, cells = 1:ncell(elev), directions = 8)
-#Use Tobler's hiking function to calculate walking speed from *cognitive* slope.
-tobler_adjusted <- function(x){
-  4 * exp(-3.5 * 2.15 * x) / 3.6 # 3.6 turns km/h into m/s
-}
-speed_c <- slope_c
-speed_c[adj] <- tobler_adjusted(slope_c[adj])
-#Divide by intercell distance again, resulting in the conductance matrix.
-conductance_c <- geoCorrection(speed_c, type = 'c')
-
-nn <- chumash_net %>%
-  group_by(from) %>% 
-  top_n(-4, distance) %>%
-  ungroup
-
-
-pts <- nn %N>% 
-  as_tibble() %>%
-  dplyr::select(x, y)
-
-path_dat <- nn %E>%
-  as_tibble %>%
-  group_by(from) %>%
-  nest %>%
-  mutate(to = map(data, ~c(.$to) %>% unlist)) %>% # turn the "to" column into list of destinations for each origin
-  dplyr::select(-data) %>%
-  # calculate the shortest paths
-  mutate(paths = map2(from, to, ~shortestPath(conductance_c, 
-                                    as.matrix(pts)[.x,], as.matrix(pts)[.y,], 
-                                    output = 'SpatialLines'), .progress = TRUE))
-
-paths_sf <- path_dat %>% 
-  mutate(paths = map(paths, st_as_sf)) %>% 
-  pull(paths) %>% 
-  do.call(rbind, .) %>%
-  bind_cols((path_dat %>% dplyr::select(-paths) %>% unnest), .) %>%
-  st_sf %>%
-  filter(., st_is_valid(.)) %>%
-  smooth(method = 'ksmooth', smoothness = 10)
-
-mar <- chumash_net %E>% as_tibble %>% dplyr::select(from, to, marriages) %>% filter(marriages > 0)
-test_spat <- left_join(nn, paths_sf) %>% dplyr::select(from, to, marriages, distance, geometry) %>%
-  mutate(marriages = 0)
-
-for(i in 1:nrow(mar)){
-  test_spat <- test_spat %>%
-  morph(to_shortest_path, mar[[i,1]], mar[[i,2]], mode = 'all', weights = distance) %>%
-  mutate(marriages = marriages + mar[[i,3]]) %>%
-  unmorph
-}
-
-elev2 <-  elev %>% as.data.frame(xy = TRUE, na.rm = TRUE) %>% as_tibble %>% mutate(elev = na_if(SRTM_W_250m, 99999)) %>% filter(!is.na(elev))
-
-test_spat %E>%
-  as_tibble %>%
-  st_as_sf %>%
-  st_set_crs(4326) %>% st_write('data/chumash_paths.shp')
-
-test_spat %E>%
-  as_tibble %>%
-  st_as_sf %>%
-  st_set_crs(4326) %>%
-  arrange(marriages) %>%
-  ggplot() +
-  geom_raster(data = elev2, aes(x, y, fill = elev), show.legend = FALSE) +
-  geom_sf(aes(color = marriages), size = 1.2) +
+  ggplot +
+  geom_raster(data = elev, aes(x, y, fill = santa_barbara_dem), show.legend = FALSE) +
+  geom_sf(aes(color = marriages), size = 2) +
   geom_sf(data = chumash_villages, aes(size = baptisms), show.legend = 'point') +
   scale_size_area(name = 'Baptisms') +
-  geom_sf_label(x = -120.2, y = 34.37, label = 'Santa Barbara Channel',  fontface = 'plain') +
-  scale_color_viridis_c(name = 'Marriages') +
-  annotation_scale(pad_x = unit(4.35, 'cm'), pad_y = unit(.9, 'cm')) +
+  scale_color_viridis_c(name = '    Marriages\n ') +
+  annotation_scale(style = 'ticks', pad_x = unit(4.35, 'cm'), pad_y = unit(.5, 'cm')) +
   scale_fill_viridis_c(option = 'D', alpha = .6) +
   theme_void() +
-  coord_sf(datum = NA)
+  coord_sf(datum = NA) +
+  ggtitle('Coastal Chumash marriages in southern California', 
+          'Marriages in mission registers, population estimated from baptisms') +
+  theme(legend.position = 'bottom')
+```
+
+### Analysis
+
+Our marriage data are a bit more complicated to model than the Roman pottery above. The data are in the form of counts with lots of 0 values, so we'll use a quasipoisson error distribution. 
+
+Also, we only know the count of marriages between each village pair, and have no record of the *direction* of the flow. This means that we can't distinguish between origin and destination effects in our spatial interaction model, and are instead limited to "site-level effects", which can be any symmetric function of each site pair. Here we'll simply use the product of the baptisms at each pair of sites. The network autocorrelation introduced here will thus be a bit more complicated, requiring something more than the origin-specific fixed effects used above. We can use the `corMLPE` function, a specialized correlation structure for modeling pairwise symmetric data. 
+
+Because of the correlation structure, we'll use the `GAMM` function for mixed models, rather than the `GAM` function used above. It uses a different algorithm under the hood, and results in both a `GAM` and `lme` object. The `te()` function used above refers to a tensor spline, a continuous two dimensional spline for modeling interactions between two continuous variables, in this case size and distance. 
+
+```{r, message = FALSE}
+marriage_model <- gamm(marriages ~ te(distance, baptisms) + eco_same,
+           family =  quasipoisson(), # overdispersed count data
+           correlation = corMLPE(form = ~from + to), # symmetric network correlation structure
+           method = 'REML',
+           select = TRUE,
+           data = chumash_dat)
+```
+
+Examine the results, both of the `GAM` and `lme` components of the model. The model has an adjusted R2 of 0.465. The `eco_same` term we included is positive and significant, meaning there are slightly more marriages between regions in the same ecological zone (coastal or inland) than across zones. On the `lme` side, we can see `rho` parameter is 0.052, meaning that the network autocorrelation introduced by two edges sharing the same node is about 5.2% out of a possible 50%.
+
+```{r}
+summary(marriage_model$gam)
+summary(marriage_model$lme)
+```
+
+We can visualize the result in two or three dimensions.
+```{r, echo = FALSE}
+expand.grid(baptisms = seq(0, 300)^2,
+            distance = seq(0, 30, 0.1),
+            eco_same = FALSE) %>%
+  mutate(marriages = predict(marriage_model$gam, ., type = 'response')) %>%
+  ggplot(aes(distance, sqrt(baptisms), fill = marriages)) +
+  geom_raster() +
+  scale_fill_viridis_c(guide = 'legend', breaks = c(0,2,4,6,8,10,12), name = 'Marriages') +
+  labs(title = 'Tensor spline of population and distance', x = 'Distance (km)', y = 'Baptisms') +
+  theme_classic() +
+  coord_fixed(ratio = .1)
+```
+
+```{r, echo = FALSE}
+vis.gam(marriage_model$gam, view = c('distance', 'baptisms'), theta = 45, phi = 15, type = 'response', se = -1, color = 'bw')
 ```
 
