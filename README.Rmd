@@ -9,6 +9,7 @@ output:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
+
 GAMMs are a flexible form of regression model well-matched to the complexities of the archaeological record, including non-normal distributions in the form of counts or proportions, non-independent observations with correlated errors, and non-linear functional relationships. Using two case studies -- an ethnographic marriage network and an archaeological assemblage similarity network -- I illustrate how this approach can lead to unbiased parameter estimates and more robust comparisons of competing hypotheses.
 
 # Background
@@ -16,15 +17,17 @@ GAMMs are a flexible form of regression model well-matched to the complexities o
 Distance is a fundamental constraint on human social interaction. This basic principle motivates the use of spatial interaction models for estimating flows of people, information, and resources on spatial and social networks. These models have both valid dynamical and statistical interpretations, a key strength well supported by theory and data from geography, economics, ecology, and genetics. To date, archaeologists have primarily relied on the dynamical approach because the idiosyncrasies of archaeological data make the wholesale adoption of statistical approaches from other fields impractical.
 
 A basic spatial interaction model estimates the *flow* of goods, information, or people between spatially-structured populations as a function of the origin site, destination site, and the space between them:
-$$flow = f\left(origin\right) \times f\left(destination\right) \times f\left(distance\right)$$
-![Conceptual diagram of a spatial interaction model.](figures/network_diagram.png)
+
+flow = $f$(origin) $\times$ $f$(destination) $\times$ $f$(distance)
+
+!["Conceptual diagram of a spatial interaction model."](figures/network_diagram.png)
 
 
 The difficult part comes when we have to define the $f\left(\right)$s. Economic geographers often use a generalized *linear* model (GLM), which requires them to definte the $f\left(\right)$s ahead of time. In a GAM, the $f\left(\right)$s are estimated directly from the data using splines.
 
 Real-world splines are flexible strips of metal or wood used to draw curves. Mathematical splines are complex curves made of many smaller, simpler curves. *Penalized* regression splines can estimate $f\left(\right)$ from the data, limiting overfitting by penalizing the "wiggliness" of the function.
 
-![A real-world spline.](figures/spline.png)
+!["A real-world spline."](figures/spline.png){width=250px}
 
 
 # Setup
@@ -50,13 +53,16 @@ library(maps) # country outlines for maps
 # Case Studies
 
 ## Oxford Pots
+
 First, we'll look at a dataset of Late Romano-British pottery available in the `archdata` package. \emph{\small{David L. Carlson and Georg Roth (2018). archdata: Example Datasets from Archaeological Research. R package version 1.2.}}
+
 ```{r}
 data("OxfordPots")
 ```
 
 ### Preprocessing
 Use `tidyr` and `dplyr` to get the data into a tidy format.
+
 ```{r}
 pots <- OxfordPots %>%
   as_tibble %>%
@@ -100,12 +106,14 @@ saveRDS(pots_sites, 'oxfordpots_locations.RDS')
 ```
 
 Join the Oxford Pots data to the geocoded locations.
+
 ```{r}
 pots_sites <- readRDS('data/oxfordpots_locations.RDS') %>%
   left_join(dplyr::select(pots, to), by = c('site' = 'to'))
 ```
 
 Make a network object using ``tidygraph` for plotting, and an edgelist tibble for modeling.
+
 ```{r}
 pots_net <- tbl_graph(nodes = pots_sites, edges = pots, directed = TRUE) %E>%
   filter(!is.na(percent)) %>%
@@ -122,6 +130,7 @@ pots_net
 ```
 
 Visualize the result.
+
 ```{r, echo=FALSE}
 # UK boundary shapefile for plotting.
 uk_boundary <- maps::map('world', region = 'UK',
@@ -159,11 +168,13 @@ pots_model <- gam(similarity ~ s(distance, by = water) + water + from,
 ```
 
 Check the model using `summary`. The model has an adjusted R2 of 0.705. Examining the significance of the smooth terms reveals that the spline of distance for land transport is significant, but the spline for water transport is not (which means the spline for water transport is selected out of the model, leaving only the intercept).
+
 ```{r}
 summary(pots_model)
 ```
 
 Let's visualize the resulting spline functions fit by the GAM. It appears that overland travel is subject to logarithmic distance decay, but water transport seems to have no such constraints. This is a case where we've used penalization as form of model selection. The data showed no signal of a distance effect for water transport, so the penalized spline was reduced to a flat line.
+
 ```{r, echo = FALSE}
 tmp1 <- expand.grid(distance = 0:140, water = c(TRUE, FALSE), from = 2)
 predict(pots_model, tmp1, type = 'response', se.fit = TRUE) %>%
@@ -182,6 +193,7 @@ predict(pots_model, tmp1, type = 'response', se.fit = TRUE) %>%
 ```
 
 Finally, examining the residuals reveals interactions that are unusually stronger of weaker than we'd expect by distance alone.
+
 ```{r, echo = FALSE}
 pots_net %E>%
   mutate(res = residuals(pots_model, type = 'response') * 100) %>%
@@ -217,6 +229,7 @@ chumash_villages
 ```
 
 Next import the marriage data, join to the village data, and calculate the pairwise euclidean distances between all sites. Also create an edgelist from this network, which we'll use for the actual modeling.
+
 ```{r}
 chumash_net <- read.csv('data/chumash_marriages.csv', row.names = 1) %>%
   as.matrix %>% 
@@ -240,6 +253,7 @@ chumash_net
 ```
 
 Map the resulting data, along with a DEM and estimated least cost paths to aid the visualization.
+
 ```{r, echo = FALSE}
 elev <- raster('data/santa_barbara_dem.tif') %>% 
   as.data.frame(xy = TRUE, na.rm = TRUE)
@@ -288,6 +302,7 @@ summary(marriage_model$lme)
 ```
 
 We can visualize the result in two or three dimensions.
+
 ```{r, echo = FALSE}
 expand.grid(baptisms = seq(0, 300)^2,
             distance = seq(0, 30, 0.1),

@@ -20,14 +20,16 @@ Background
 Distance is a fundamental constraint on human social interaction. This basic principle motivates the use of spatial interaction models for estimating flows of people, information, and resources on spatial and social networks. These models have both valid dynamical and statistical interpretations, a key strength well supported by theory and data from geography, economics, ecology, and genetics. To date, archaeologists have primarily relied on the dynamical approach because the idiosyncrasies of archaeological data make the wholesale adoption of statistical approaches from other fields impractical.
 
 A basic spatial interaction model estimates the *flow* of goods, information, or people between spatially-structured populations as a function of the origin site, destination site, and the space between them:
-*f**l**o**w* = *f*(*o**r**i**g**i**n*) × *f*(*d**e**s**t**i**n**a**t**i**o**n*) × *f*(*d**i**s**t**a**n**c**e*)
- ![Conceptual diagram of a spatial interaction model.](figures/network_diagram.png)
+
+flow = *f*(origin) × *f*(destination) × *f*(distance)
+
+!["Conceptual diagram of a spatial interaction model."](figures/network_diagram.png)
 
 The difficult part comes when we have to define the *f*()s. Economic geographers often use a generalized *linear* model (GLM), which requires them to definte the *f*()s ahead of time. In a GAM, the *f*()s are estimated directly from the data using splines.
 
 Real-world splines are flexible strips of metal or wood used to draw curves. Mathematical splines are complex curves made of many smaller, simpler curves. *Penalized* regression splines can estimate *f*() from the data, limiting overfitting by penalizing the "wiggliness" of the function.
 
-![A real-world spline.](figures/spline.png)
+<img src="figures/spline.png" alt="&quot;A real-world spline.&quot;" width="250" />
 
 Setup
 =====
@@ -166,7 +168,9 @@ pots_net
     ## 3 Alchester  -1.87  52.2 (-1.867605 52.21531)
     ## # … with 42 more rows
 
-Visualize the result. ![](README_files/figure-markdown_github/unnamed-chunk-8-1.png)
+Visualize the result.
+
+![](README_files/figure-markdown_github/unnamed-chunk-8-1.png)
 
 ### Analysis
 
@@ -213,9 +217,13 @@ summary(pots_model)
     ## R-sq.(adj) =  0.705   Deviance explained =   69%
     ## -REML = -70.463  Scale est. = 1         n = 43
 
-Let's visualize the resulting spline functions fit by the GAM. It appears that overland travel is subject to logarithmic distance decay, but water transport seems to have no such constraints. This is a case where we've used penalization as form of model selection. The data showed no signal of a distance effect for water transport, so the penalized spline was reduced to a flat line. ![](README_files/figure-markdown_github/unnamed-chunk-11-1.png)
+Let's visualize the resulting spline functions fit by the GAM. It appears that overland travel is subject to logarithmic distance decay, but water transport seems to have no such constraints. This is a case where we've used penalization as form of model selection. The data showed no signal of a distance effect for water transport, so the penalized spline was reduced to a flat line.
 
-Finally, examining the residuals reveals interactions that are unusually stronger of weaker than we'd expect by distance alone. ![](README_files/figure-markdown_github/unnamed-chunk-12-1.png)
+![](README_files/figure-markdown_github/unnamed-chunk-11-1.png)
+
+Finally, examining the residuals reveals interactions that are unusually stronger of weaker than we'd expect by distance alone.
+
+![](README_files/figure-markdown_github/unnamed-chunk-12-1.png)
 
 Chumash Marriages
 -----------------
@@ -308,7 +316,9 @@ chumash_dat <-  chumash_net %E>% as_tibble
     ## 3 Siso…         47      200 very… TRUE    -120.  34.5
     ## # … with 38 more rows, and 1 more variable: geometry <POINT [°]>
 
-Map the resulting data, along with a DEM and estimated least cost paths to aid the visualization. ![](README_files/figure-markdown_github/unnamed-chunk-17-1.png)
+Map the resulting data, along with a DEM and estimated least cost paths to aid the visualization.
+
+![](README_files/figure-markdown_github/unnamed-chunk-17-1.png)
 
 ### Analysis
 
@@ -409,6 +419,8 @@ summary(marriage_model$lme)
     ## Number of Observations: 820
     ## Number of Groups: 1
 
-We can visualize the result in two or three dimensions. ![](README_files/figure-markdown_github/unnamed-chunk-20-1.png)
+We can visualize the result in two or three dimensions.
+
+![](README_files/figure-markdown_github/unnamed-chunk-20-1.png)
 
 ![](README_files/figure-markdown_github/unnamed-chunk-21-1.png)
